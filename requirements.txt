@@ -1,0 +1,35 @@
+# A股量化交易系统依赖
+
+# 数据获取
+akshare>=1.14.0
+tushare>=1.4.0
+
+# 数据处理
+pandas>=2.2.0
+numpy>=1.26.0
+polars>=0.20.0
+
+# 回测
+backtrader>=1.9.78
+
+# 数据库
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+
+# 调度
+apscheduler>=3.10.0
+
+# 通知
+requests>=2.31.0
+
+# 可视化
+matplotlib>=3.8.0
+plotly>=5.18.0
+
+# 工具
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+loguru>=0.7.0
+
+# 实盘（可选）
+# vnpy>=3.9.0
