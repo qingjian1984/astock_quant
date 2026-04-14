@@ -13,6 +13,7 @@ from data.sources.yahoo_src import YahooFinanceSource
 from backtest.engine import BacktestEngine
 from utils.viz import plot_equity_curve, plot_trades, plot_monthly_returns
 from utils.monitor import AlertManager, PerformanceMonitor
+from utils.analyst import StrategyAnalyst
 import config
 
 # 策略导入
@@ -123,14 +124,19 @@ def run_backtest(
     for k, v in stats.items():
         logger.info(f"  {k}: {v}")
 
+    # 策略分析与建议
+    equity = engine.get_equity_curve()
+    trades = engine.get_trades()
+    analyst = StrategyAnalyst()
+    report = analyst.analyze(equity, trades, stats, symbol=symbols[0])
+    analyst.print_report(report)
+
     # 监控检查
     if engine.equity_curve:
         final = engine.equity_curve[-1]
         monitor.daily_pnl(final["equity"])
 
     # 保存交易记录
-    trades = engine.get_trades()
-    equity = engine.get_equity_curve()
     results_dir = Path(__file__).resolve().parent.parent / "results"
     results_dir.mkdir(exist_ok=True)
 
