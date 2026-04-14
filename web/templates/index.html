@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A股量化交易系统</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif; background: #f0f2f5; color: #333; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        header { background: linear-gradient(135deg, #1890ff, #096dd9); color: white; padding: 15px 0; margin-bottom: 20px; }
+        header h1 { text-align: center; font-size: 24px; }
+        .tabs { display: flex; gap: 5px; margin-bottom: 20px; border-bottom: 2px solid #ddd; flex-wrap: wrap; }
+        .tab { padding: 10px 16px; cursor: pointer; border-bottom: 3px solid transparent; transition: all 0.3s; white-space: nowrap; font-size: 14px; }
+        .tab:hover { background: #e6f7ff; }
+        .tab.active { border-bottom-color: #1890ff; color: #1890ff; font-weight: bold; }
+        .panel { display: none; background: white; border-radius: 8px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .panel.active { display: block; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: bold; color: #555; font-size: 13px; }
+        .form-group input, .form-group select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+        .form-group input:focus, .form-group select:focus { outline: none; border-color: #1890ff; box-shadow: 0 0 0 2px rgba(24,144,255,0.2); }
+        .form-row { display: flex; gap: 15px; margin-bottom: 15px; align-items: flex-end; }
+        .form-row .form-group { flex: 1; margin-bottom: 0; }
+        .btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; transition: all 0.3s; }
+        .btn:hover { opacity: 0.85; transform: translateY(-1px); }
+        .btn:active { transform: translateY(0); }
+        .btn-primary { background: #1890ff; color: white; }
+        .btn-danger { background: #ff4d4f; color: white; }
+        .btn-success { background: #52c41a; color: white; }
+        .btn-warning { background: #faad14; color: white; }
+        .btn-sm { padding: 6px 12px; font-size: 12px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; font-size: 14px; }
+        th { background: #fafafa; font-weight: bold; color: #555; }
+        tr:hover td { background: #f5f5f5; }
+        .card { background: #fafafa; padding: 16px; border-radius: 6px; margin-bottom: 12px; border: 1px solid #e8e8e8; }
+        .card h4 { margin-bottom: 10px; color: #333; font-size: 14px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+        .stat { text-align: center; padding: 24px; background: white; border-radius: 8px; border-left: 4px solid #1890ff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .stat h3 { font-size: 32px; margin-bottom: 5px; color: #1890ff; }
+        .stat p { color: #666; font-size: 13px; }
+        .log-box { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 6px; max-height: 500px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 12px; line-height: 1.6; }
+        .badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 12px; margin-right: 5px; }
+        .badge-blue { background: #e6f7ff; color: #1890ff; }
+        .badge-green { background: #f6ffed; color: #52c41a; }
+        .badge-orange { background: #fff7e6; color: #fa8c16; }
+        .badge-red { background: #fff1f0; color: #f5222d; }
+        .empty { text-align: center; padding: 40px; color: #999; }
+        .toast { position: fixed; top: 20px; right: 20px; padding: 12px 24px; border-radius: 6px; color: white; font-size: 14px; z-index: 1000; transform: translateX(120%); transition: transform 0.3s; }
+        .toast.show { transform: translateX(0); }
+        .toast-success { background: #52c41a; }
+        .toast-error { background: #ff4d4f; }
+        .section-title { font-size: 16px; font-weight: bold; color: #333; margin: 20px 0 12px 0; padding-bottom: 8px; border-bottom: 1px solid #eee; }
+        .hint { color: #888; font-size: 12px; margin-top: 4px; }
+        .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: 0.3s; border-radius: 24px; }
+        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: 0.3s; border-radius: 50%; }
+        input:checked + .slider { background-color: #52c41a; }
+        input:checked + .slider:before { transform: translateX(20px); }
+        .source-item { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: white; border: 1px solid #e8e8e8; border-radius: 6px; margin-bottom: 8px; }
+        .source-info { flex: 1; }
+        .source-info strong { font-size: 14px; }
+        .source-info span { font-size: 12px; color: #888; margin-left: 8px; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>A股量化交易系统 - Web管理面板</h1>
+    </header>
+
+    <div class="toast" id="toast"></div>
+
+    <div class="container">
+        <div class="tabs">
+            <div class="tab active" data-tab="overview">总览</div>
+            <div class="tab" data-tab="longterm">长线股</div>
+            <div class="tab" data-tab="swing">波段股</div>
+            <div class="tab" data-tab="limits">交易限制</div>
+            <div class="tab" data-tab="tradeparams">交易参数</div>
+            <div class="tab" data-tab="risk">风控配置</div>
+            <div class="tab" data-tab="datasources">数据源</div>
+            <div class="tab" data-tab="logs">日志</div>
+        </div>
+
+        <!-- 总览 -->
+        <div class="panel active" id="overview">
+            <h2 style="margin-bottom: 20px;">系统状态</h2>
+            <div class="grid" id="stats">
+                <div class="stat">
+                    <h3 id="modeDisplay">--</h3>
+                    <p>交易模式</p>
+                </div>
+                <div class="stat">
+                    <h3 id="ltCount">0</h3>
+                    <p>长线股数量</p>
+                </div>
+                <div class="stat">
+                    <h3 id="swingMax">--</h3>
+                    <p>波段最大持仓</p>
+                </div>
+                <div class="stat">
+                    <h3 id="scanInterval">--</h3>
+                    <p>选股扫描间隔</p>
+                </div>
+                <div class="stat">
+                    <h3 id="dailyLimit">--</h3>
+                    <p>每日最大交易次数</p>
+                </div>
+                <div class="stat">
+                    <h3 id="stopLoss">--</h3>
+                    <p>止损比例</p>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 24px;">
+                <h3>快速切换交易模式</h3>
+                <div class="form-row" style="margin-top: 12px;">
+                    <div class="form-group" style="flex: 2;">
+                        <select id="tradingMode">
+                            <option value="paper">模拟盘 (安全测试)</option>
+                            <option value="live">实盘 (需要券商API)</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary" onclick="updateMode()">保存</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 长线股 -->
+        <div class="panel" id="longterm">
+            <h2 style="margin-bottom: 12px;">长线股管理</h2>
+            <p style="color: #666; margin-bottom: 20px; font-size: 13px;">添加股票后，系统会自动回测寻找最优策略，长期跟踪并做T降成本</p>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>股票代码</label>
+                    <input type="text" id="ltSymbol" placeholder="如 000001">
+                </div>
+                <div class="form-group">
+                    <label>股票名称</label>
+                    <input type="text" id="ltName" placeholder="如 平安银行">
+                </div>
+                <div class="form-group">
+                    <label>分配资金 (元)</label>
+                    <input type="number" id="ltCapital" value="100000">
+                </div>
+                <button class="btn btn-primary" onclick="addLongTerm()" style="margin-bottom: 15px;">添加</button>
+            </div>
+
+            <div style="margin: 15px 0;">
+                <button class="btn btn-success" onclick="runOptimize()">运行策略优化</button>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>代码</th>
+                        <th>名称</th>
+                        <th>分配资金</th>
+                        <th>最优策略</th>
+                        <th>评分</th>
+                        <th>优化时间</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="ltTable">
+                    <tr><td colspan="7" class="empty">暂无长线股，请添加</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 波段股 -->
+        <div class="panel" id="swing">
+            <h2 style="margin-bottom: 12px;">波段股配置</h2>
+            <p style="color: #666; margin-bottom: 20px; font-size: 13px;">系统自动扫描市场，发现符合条件的股票自动买入，达到止盈止损自动卖出</p>
+
+            <div class="grid">
+                <div class="card">
+                    <div class="form-group">
+                        <label>扫描间隔 (秒)</label>
+                        <input type="number" id="swingScan" value="3600">
+                        <div class="hint">建议 1800~7200，太频繁可能被封IP</div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>最大持仓数</label>
+                        <input type="number" id="swingMaxPos" value="5">
+                        <div class="hint">同时持有的波段股最大数量</div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>止损比例 (%)</label>
+                        <input type="number" id="swingStopLoss" value="-5" step="0.5">
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>止盈比例 (%)</label>
+                        <input type="number" id="swingTakeProfit" value="10" step="0.5">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 16px;">
+                <div class="form-group">
+                    <label>选股策略 (逗号分隔)</label>
+                    <input type="text" id="swingStrats" value="ma_cross,macd">
+                    <div class="hint">可用策略: ma_cross, macd, rsi, multi_factor</div>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" onclick="saveSwing()" style="margin-top: 16px;">保存波段配置</button>
+        </div>
+
+        <!-- 交易限制 -->
+        <div class="panel" id="limits">
+            <h2 style="margin-bottom: 12px;">交易限制配置</h2>
+            <p style="color: #666; margin-bottom: 20px; font-size: 13px;">控制每日交易频次、金额，防止过度交易</p>
+
+            <div class="section-title">频率限制</div>
+            <div class="grid">
+                <div class="card">
+                    <div class="form-group">
+                        <label>每日最大交易次数</label>
+                        <input type="number" id="limit_max_trades_per_day">
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>最小交易间隔 (秒)</label>
+                        <input type="number" id="limit_min_trade_interval">
+                        <div class="hint">两次交易之间的最小时间间隔</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-title">金额限制</div>
+            <div class="grid">
+                <div class="card">
+                    <div class="form-group">
+                        <label>单笔最大金额 (元)</label>
+                        <input type="number" id="limit_max_amount_per_trade">
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>单笔最大股数</label>
+                        <input type="number" id="limit_max_volume_per_trade">
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>每日最大交易总额 (元)</label>
+                        <input type="number" id="limit_max_daily_amount">
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>每日最大买入金额 (元)</label>
+                        <input type="number" id="limit_max_daily_buy_amount">
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>每日最大卖出金额 (元)</label>
+                        <input type="number" id="limit_max_daily_sell_amount">
+                    </div>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" onclick="saveLimits()" style="margin-top: 20px;">保存交易限制</button>
+        </div>
+
+        <!-- 交易参数 -->
+        <div class="panel" id="tradeparams">
+            <h2 style="margin-bottom: 12px;">交易参数配置</h2>
+            <p style="color: #666; margin-bottom: 20px; font-size: 13px;">设置交易手续费、滑点等参数，影响回测和实盘成本计算</p>
+
+            <div class="section-title">手续费</div>
+            <div class="grid">
+                <div class="card">
+                    <div class="form-group">
+                        <label>佣金费率</label>
+                        <input type="number" id="param_commission_rate" step="0.00001">
+                        <div class="hint">默认 0.00025 (万2.5)</div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>最低佣金 (元)</label>
+                        <input type="number" id="param_commission_min" step="0.1">
+                        <div class="hint">默认 5 元</div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>印花税率</label>
+                        <input type="number" id="param_stamp_tax" step="0.0001">
+                        <div class="hint">默认 0.001 (千1)，仅卖出收取</div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>过户费率</label>
+                        <input type="number" id="param_transfer_fee" step="0.00001">
+                        <div class="hint">默认 0.00001 (万0.1)</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-title">其他</div>
+            <div class="grid">
+                <div class="card">
+                    <div class="form-group">
+                        <label>滑点 (百分比)</label>
+                        <input type="number" id="param_slippage" step="0.0001">
+                        <div class="hint">默认 0.001 (千1)</div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>最小交易单位 (股)</label>
+                        <input type="number" id="param_min_volume">
+                        <div class="hint">A股默认 100 (1手)</div>
+                    </div>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" onclick="saveTradeParams()" style="margin-top: 20px;">保存交易参数</button>
+        </div>
+
+        <!-- 风控配置 -->
+        <div class="panel" id="risk">
+            <h2 style="margin-bottom: 12px;">风控配置</h2>
+            <p style="color: #666; margin-bottom: 20px; font-size: 13px;">设置仓位控制、止损止盈、黑名单等风控规则</p>
+
+            <div class="section-title">仓位控制</div>
+            <div class="grid">
+                <div class="card">
+                    <div class="form-group">
+                        <label>单票最大仓位 (%)</label>
+                        <input type="number" id="risk_max_position_pct" step="1">
+                        <div class="hint">单只股票占总资金的最大比例</div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>总仓位上限 (%)</label>
+                        <input type="number" id="risk_max_total_position" step="1">
+                        <div class="hint">所有持仓占总资金的最大比例</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-title">止损止盈</div>
+            <div class="grid">
+                <div class="card">
+                    <div class="form-group">
+                        <label>止损比例 (%)</label>
+                        <input type="number" id="risk_stop_loss_pct" step="1">
+                        <div class="hint">亏损达到此比例自动止损</div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>止盈比例 (%)</label>
+                        <input type="number" id="risk_take_profit_pct" step="1">
+                        <div class="hint">盈利达到此比例自动止盈</div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="form-group">
+                        <label>最大回撤暂停 (%)</label>
+                        <input type="number" id="risk_max_drawdown_pct" step="1">
+                        <div class="hint">账户回撤达到此比例暂停交易</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-title">黑名单</div>
+            <div class="card">
+                <div class="form-group">
+                    <label>黑名单股票代码 (逗号分隔)</label>
+                    <input type="text" id="risk_blacklist" placeholder="如 000001,600519">
+                    <div class="hint">黑名单中的股票不会被交易系统买入</div>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" onclick="saveRisk()" style="margin-top: 20px;">保存风控配置</button>
+        </div>
+
+        <!-- 数据源 -->
+        <div class="panel" id="datasources">
+            <h2 style="margin-bottom: 12px;">数据源管理</h2>
+            <p style="color: #666; margin-bottom: 20px; font-size: 13px;">配置数据源优先级和连接状态，系统按优先级自动降级</p>
+
+            <div id="dataSourceList"></div>
+
+            <div class="card" style="margin-top: 20px;">
+                <div class="form-group">
+                    <label>Tushare Token (可选)</label>
+                    <input type="text" id="tushareToken" placeholder="输入你的 Tushare Pro token">
+                    <div class="hint">在 <a href="https://tushare.pro" target="_blank">tushare.pro</a> 注册获取</div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 12px;">
+                <h4>测试数据源连接</h4>
+                <div class="form-row" style="margin-top: 12px;">
+                    <div class="form-group">
+                        <label>选择数据源</label>
+                        <select id="testSource">
+                            <option value="AKShare">AKShare</option>
+                            <option value="BaoStock">BaoStock</option>
+                            <option value="Tushare">Tushare</option>
+                            <option value="YahooFinance">YahooFinance</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>测试股票代码</label>
+                        <input type="text" id="testSymbol" value="000001">
+                    </div>
+                    <button class="btn btn-warning" onclick="testDataSource()">测试连接</button>
+                </div>
+                <div id="testResult" style="margin-top: 12px; display: none;">
+                    <div class="card" style="background: #f6ffed; border-color: #b7eb8f;">
+                        <div id="testResultContent"></div>
+                    </div>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" onclick="saveDataSources()" style="margin-top: 16px;">保存数据源配置</button>
+        </div>
+
+        <!-- 日志 -->
+        <div class="panel" id="logs">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h2>运行日志</h2>
+                <div>
+                    <select id="logLines" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin-right: 8px;">
+                        <option value="100">100行</option>
+                        <option value="200" selected>200行</option>
+                        <option value="500">500行</option>
+                        <option value="1000">1000行</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="loadLogs()">刷新</button>
+                    <button class="btn btn-success" id="autoRefreshBtn" onclick="toggleAutoRefresh()">自动刷新</button>
+                </div>
+            </div>
+            <div class="log-box" id="logBox">点击"刷新"加载日志...</div>
+        </div>
+    </div>
+
+    <script>
+        let autoRefresh = null;
+
+        // Toast 提示
+        function showToast(msg, type = 'success') {
+            const toast = document.getElementById('toast');
+            toast.textContent = msg;
+            toast.className = 'toast toast-' + type + ' show';
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+
+        // 标签切换
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.onclick = () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById(tab.dataset.tab).classList.add('active');
+            };
+        });
+
+        // 加载配置
+        async function loadConfig() {
+            try {
+                const res = await fetch('/api/config');
+                const cfg = await res.json();
+
+                // 总览
+                document.getElementById('tradingMode').value = cfg.trading_mode || 'paper';
+                document.getElementById('modeDisplay').textContent = cfg.trading_mode === 'live' ? '实盘' : '模拟盘';
+                document.getElementById('swingMax').textContent = cfg.swing_config?.max_positions || 5;
+                document.getElementById('scanInterval').textContent = (cfg.swing_config?.scan_interval || 3600) + 's';
+                document.getElementById('dailyLimit').textContent = cfg.trade_limits?.max_trades_per_day || 10;
+                document.getElementById('stopLoss').textContent = ((cfg.risk_params?.stop_loss_pct || -0.08) * 100).toFixed(0) + '%';
+
+                loadLongTerm();
+                loadLimits(cfg.trade_limits);
+                loadSwing(cfg.swing_config);
+                loadTradeParams(cfg.trade_params);
+                loadRisk(cfg.risk_params);
+                loadDataSources(cfg.data_sources);
+            } catch (e) {
+                showToast('加载配置失败: ' + e.message, 'error');
+            }
+        }
+
+        // 加载长线股
+        async function loadLongTerm() {
+            try {
+                const res = await fetch('/api/longterm');
+                const stocks = await res.json();
+                const tbody = document.getElementById('ltTable');
+                document.getElementById('ltCount').textContent = stocks.length;
+
+                if (!stocks || stocks.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="empty">暂无长线股，请添加</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = stocks.map(s => `
+                    <tr>
+                        <td><strong>${s.symbol}</strong></td>
+                        <td>${s.name || '-'}</td>
+                        <td>¥${(s.min_capital || 0).toLocaleString()}</td>
+                        <td>${s.strategy ? '<span class="badge badge-green">' + s.strategy + '</span>' : '<span class="badge badge-orange">待优化</span>'}</td>
+                        <td>${s.score !== null && s.score !== undefined ? s.score.toFixed(2) : '-'}</td>
+                        <td>${s.optimized_at ? new Date(s.optimized_at).toLocaleString('zh-CN') : '-'}</td>
+                        <td><button class="btn btn-danger btn-sm" onclick="removeLongTerm('${s.symbol}')">删除</button></td>
+                    </tr>
+                `).join('');
+            } catch (e) {
+                showToast('加载长线股失败', 'error');
+            }
+        }
+
+        // 添加长线股
+        async function addLongTerm() {
+            const symbol = document.getElementById('ltSymbol').value.trim();
+            const name = document.getElementById('ltName').value.trim();
+            const capital = parseInt(document.getElementById('ltCapital').value);
+            if (!symbol) return showToast('请输入股票代码', 'error');
+
+            const res = await fetch('/api/longterm', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ symbol, name, capital })
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                showToast('添加成功: ' + symbol);
+                document.getElementById('ltSymbol').value = '';
+                document.getElementById('ltName').value = '';
+                loadLongTerm();
+            } else {
+                showToast(data.message || '添加失败', 'error');
+            }
+        }
+
+        // 删除长线股
+        async function removeLongTerm(symbol) {
+            if (!confirm('确定删除 ' + symbol + ' 吗？')) return;
+            await fetch('/api/longterm', {
+                method: 'DELETE',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ symbol })
+            });
+            showToast('已删除: ' + symbol);
+            loadLongTerm();
+        }
+
+        // 运行优化
+        async function runOptimize() {
+            const symbol = prompt('请输入要优化的股票代码:');
+            if (!symbol) return;
+            showToast('开始优化 ' + symbol + '，这可能需要几分钟...');
+            try {
+                const res = await fetch('/api/optimize', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ symbol })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    const r = data.result;
+                    showToast('优化完成! 策略: ' + r.strategy + ', 得分: ' + r.score.toFixed(2));
+                    loadLongTerm();
+                } else {
+                    showToast('优化失败: ' + data.message, 'error');
+                }
+            } catch (e) {
+                showToast('优化请求失败: ' + e.message, 'error');
+            }
+        }
+
+        // 加载限制
+        function loadLimits(limits) {
+            if (!limits) return;
+            const fields = ['max_trades_per_day', 'max_amount_per_trade', 'max_volume_per_trade',
+                           'min_trade_interval', 'max_daily_amount', 'max_daily_buy_amount', 'max_daily_sell_amount'];
+            fields.forEach(f => {
+                const el = document.getElementById('limit_' + f);
+                if (el) el.value = limits[f] !== undefined ? limits[f] : '';
+            });
+        }
+
+        // 保存限制
+        async function saveLimits() {
+            const limits = {};
+            ['max_trades_per_day', 'max_amount_per_trade', 'max_volume_per_trade',
+             'min_trade_interval', 'max_daily_amount', 'max_daily_buy_amount', 'max_daily_sell_amount'].forEach(f => {
+                const el = document.getElementById('limit_' + f);
+                if (el) limits[f] = parseInt(el.value);
+            });
+
+            const res = await fetch('/api/config/limits', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(limits)
+            });
+            const data = await res.json();
+            if (data.status === 'success') showToast('交易限制已保存');
+            else showToast('保存失败', 'error');
+        }
+
+        // 加载交易参数
+        function loadTradeParams(params) {
+            if (!params) return;
+            const fields = ['commission_rate', 'commission_min', 'stamp_tax', 'transfer_fee', 'slippage', 'min_volume'];
+            fields.forEach(f => {
+                const el = document.getElementById('param_' + f);
+                if (el) el.value = params[f] !== undefined ? params[f] : '';
+            });
+        }
+
+        // 保存交易参数
+        async function saveTradeParams() {
+            const params = {};
+            ['commission_rate', 'commission_min', 'stamp_tax', 'transfer_fee', 'slippage', 'min_volume'].forEach(f => {
+                const el = document.getElementById('param_' + f);
+                if (el) params[f] = parseFloat(el.value);
+            });
+
+            const res = await fetch('/api/config/trade_params', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(params)
+            });
+            const data = await res.json();
+            if (data.status === 'success') showToast('交易参数已保存');
+            else showToast('保存失败', 'error');
+        }
+
+        // 加载风控
+        function loadRisk(risk) {
+            if (!risk) return;
+            document.getElementById('risk_max_position_pct').value = (risk.max_position_pct || 0.2) * 100;
+            document.getElementById('risk_max_total_position').value = (risk.max_total_position || 0.8) * 100;
+            document.getElementById('risk_stop_loss_pct').value = (risk.stop_loss_pct || -0.08) * 100;
+            document.getElementById('risk_take_profit_pct').value = (risk.take_profit_pct || 0.2) * 100;
+            document.getElementById('risk_max_drawdown_pct').value = (risk.max_drawdown_pct || -0.15) * 100;
+            document.getElementById('risk_blacklist').value = (risk.blacklist || []).join(',');
+        }
+
+        // 保存风控
+        async function saveRisk() {
+            const risk = {
+                max_position_pct: parseFloat(document.getElementById('risk_max_position_pct').value) / 100,
+                max_total_position: parseFloat(document.getElementById('risk_max_total_position').value) / 100,
+                stop_loss_pct: parseFloat(document.getElementById('risk_stop_loss_pct').value) / 100,
+                take_profit_pct: parseFloat(document.getElementById('risk_take_profit_pct').value) / 100,
+                max_drawdown_pct: parseFloat(document.getElementById('risk_max_drawdown_pct').value) / 100,
+                blacklist: document.getElementById('risk_blacklist').value.split(',').map(s => s.trim()).filter(s => s),
+            };
+
+            const res = await fetch('/api/config/risk', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(risk)
+            });
+            const data = await res.json();
+            if (data.status === 'success') showToast('风控配置已保存');
+            else showToast('保存失败', 'error');
+        }
+
+        // 加载波段配置
+        function loadSwing(cfg) {
+            if (!cfg) return;
+            document.getElementById('swingScan').value = cfg.scan_interval || 3600;
+            document.getElementById('swingMaxPos').value = cfg.max_positions || 5;
+            document.getElementById('swingStrats').value = (cfg.strategies || []).join(',');
+            document.getElementById('swingStopLoss').value = ((cfg.stop_loss_pct || -0.05) * 100).toFixed(0);
+            document.getElementById('swingTakeProfit').value = ((cfg.take_profit_pct || 0.10) * 100).toFixed(0);
+        }
+
+        // 保存波段配置
+        async function saveSwing() {
+            const cfg = {
+                scan_interval: parseInt(document.getElementById('swingScan').value),
+                max_positions: parseInt(document.getElementById('swingMaxPos').value),
+                strategies: document.getElementById('swingStrats').value,
+                stop_loss_pct: parseFloat(document.getElementById('swingStopLoss').value) / 100,
+                take_profit_pct: parseFloat(document.getElementById('swingTakeProfit').value) / 100,
+            };
+
+            const res = await fetch('/api/config/swing', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(cfg)
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                showToast('波段配置已保存');
+                loadConfig();
+            } else showToast('保存失败', 'error');
+        }
+
+        // 更新模式
+        async function updateMode() {
+            const mode = document.getElementById('tradingMode').value;
+            const res = await fetch('/api/config/trading_mode', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ mode })
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                document.getElementById('modeDisplay').textContent = mode === 'live' ? '实盘' : '模拟盘';
+                showToast('交易模式已切换为: ' + (mode === 'live' ? '实盘' : '模拟盘'));
+            }
+        }
+
+        // 加载数据源
+        function loadDataSources(sources) {
+            if (!sources) return;
+            const list = document.getElementById('dataSourceList');
+            list.innerHTML = sources.map(s => `
+                <div class="source-item">
+                    <div class="source-info">
+                        <strong>${s.name}</strong>
+                        <span>优先级: ${s.priority}</span>
+                        <span>|</span>
+                        <span>状态: ${s.enabled ? '<span class="badge badge-green">已启用</span>' : '<span class="badge badge-red">已禁用</span>'}</span>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" ${s.enabled ? 'checked' : ''} onchange="toggleDataSource('${s.name}', this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            `).join('');
+        }
+
+        // 切换数据源
+        async function toggleDataSource(name, enabled) {
+            const res = await fetch('/api/config/data_sources', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    sources: [{name, enabled}]
+                })
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                showToast(name + (enabled ? ' 已启用' : ' 已禁用'));
+                loadConfig();
+            }
+        }
+
+        // 测试数据源
+        async function testDataSource() {
+            const source = document.getElementById('testSource').value;
+            const symbol = document.getElementById('testSymbol').value;
+            showToast('正在测试 ' + source + ' 连接...');
+
+            try {
+                const res = await fetch('/api/data_sources/test', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ source, symbol })
+                });
+                const data = await res.json();
+                const resultDiv = document.getElementById('testResult');
+                const contentDiv = document.getElementById('testResultContent');
+                resultDiv.style.display = 'block';
+
+                if (data.status === 'success') {
+                    resultDiv.querySelector('.card').style.background = '#f6ffed';
+                    resultDiv.querySelector('.card').style.borderColor = '#b7eb8f';
+                    contentDiv.innerHTML = `
+                        <strong>连接成功!</strong><br>
+                        数据源: ${data.source}<br>
+                        数据行数: ${data.rows}<br>
+                        列名: ${data.columns.join(', ')}<br>
+                        最新日期: ${data.latest_date}
+                    `;
+                } else {
+                    resultDiv.querySelector('.card').style.background = '#fff1f0';
+                    resultDiv.querySelector('.card').style.borderColor = '#ffa39e';
+                    contentDiv.innerHTML = `<strong>连接失败</strong><br>错误: ${data.message}`;
+                }
+            } catch (e) {
+                showToast('测试请求失败: ' + e.message, 'error');
+            }
+        }
+
+        // 保存数据源
+        async function saveDataSources() {
+            const token = document.getElementById('tushareToken').value;
+            const res = await fetch('/api/config/data_sources', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ tushare_token: token })
+            });
+            const data = await res.json();
+            if (data.status === 'success') showToast('数据源配置已保存');
+            else showToast('保存失败', 'error');
+        }
+
+        // 加载日志
+        async function loadLogs() {
+            const lines = document.getElementById('logLines').value;
+            try {
+                const res = await fetch('/api/logs?lines=' + lines);
+                const data = await res.json();
+                const box = document.getElementById('logBox');
+                box.innerHTML = data.logs.map(line => `<div>${line.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`).join('');
+                box.scrollTop = box.scrollHeight;
+            } catch (e) {
+                document.getElementById('logBox').innerHTML = '<div style="color: #ff4d4f;">加载日志失败: ' + e.message + '</div>';
+            }
+        }
+
+        // 自动刷新日志
+        function toggleAutoRefresh() {
+            const btn = document.getElementById('autoRefreshBtn');
+            if (autoRefresh) {
+                clearInterval(autoRefresh);
+                autoRefresh = null;
+                btn.textContent = '自动刷新';
+                btn.className = 'btn btn-success';
+                showToast('自动刷新已停止');
+            } else {
+                autoRefresh = setInterval(loadLogs, 5000);
+                btn.textContent = '停止刷新';
+                btn.className = 'btn btn-danger';
+                showToast('自动刷新已启动 (每5秒)');
+            }
+        }
+
+        // 初始化
+        loadConfig();
+        loadLogs();
+    </script>
+</body>
+</html>
