@@ -35,18 +35,20 @@ PARAM_SPACES = {
 
 
 def start_live_trading(symbols: list, strategy_name: str = "ma_cross",
-                       check_interval: int = 60, dry_run: bool = True):
+                       trading_mode: str = "paper", check_interval: int = 60,
+                       custom_limits: dict = None):
     """
-    启动实盘交易
-    dry_run: True=模拟交易, False=实盘（需券商API）
+    启动交易
+    trading_mode: "paper"=模拟盘, "live"=实盘
     """
     logger.info("=" * 50)
-    logger.info("A股量化交易系统 - 实盘交易模块")
+    logger.info("A股量化交易系统 - 交易模块")
     logger.info("=" * 50)
 
-    if dry_run:
-        logger.warning("当前为模拟交易模式（dry_run=True）")
-        logger.warning("实盘交易需要对接券商API，请修改 TradeSimulator")
+    if trading_mode == "live":
+        logger.warning("实盘模式：请确认已配置券商API")
+    else:
+        logger.info("模拟盘模式：安全测试")
 
     # 初始化策略
     if strategy_name not in STRATEGIES:
@@ -66,6 +68,8 @@ def start_live_trading(symbols: list, strategy_name: str = "ma_cross",
         symbols=symbols,
         strategy_name=strategy_name,
         param_space=param_space,
+        trading_mode=trading_mode,
+        custom_limits=custom_limits,
     )
     trader.check_interval = check_interval
 
@@ -74,17 +78,9 @@ def start_live_trading(symbols: list, strategy_name: str = "ma_cross",
 
     def monitored_cycle():
         original_cycle()
-        supervisor.heartbeat(trader.trader.get_state())
-
-        # 检查系统健康
+        state = trader.executor.get_state() if hasattr(trader.executor, "get_state") else {}
+        supervisor.heartbeat(state)
         supervisor.check_system_health()
-
-        # 检查盈亏
-        prices = {s: trader.feed.get_latest(s).get("price", 0) for s in symbols}
-        total_value = trader.trader.get_portfolio_value(prices)
-        supervisor.check_pnl_alert(total_value, trader.trader.cash + sum(
-            p["volume"] * p["cost"] for p in trader.trader.positions.values()
-        ), trader.trader.cash)
 
     trader._cycle = monitored_cycle
 
@@ -92,25 +88,47 @@ def start_live_trading(symbols: list, strategy_name: str = "ma_cross",
     try:
         trader.start()
     finally:
-        # 生成最终报告
         learning_stats = trader.learner.get_learning_stats()
-        report = supervisor.generate_daily_report(trader.trader.get_state(), learning_stats)
+        report = supervisor.generate_daily_report(trader.executor.get_state() if hasattr(trader.executor, 'get_state') else {}, learning_stats)
         logger.info(report)
 
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="A股实盘交易")
+    parser = argparse.ArgumentParser(description="A股交易系统")
     parser.add_argument("--symbol", default="000001", help="股票代码 (多个用逗号分隔)")
     parser.add_argument("--strategy", default="ma_cross", choices=list(STRATEGIES.keys()))
+    parser.add_argument("--mode", default="paper", choices=["paper", "live"], help="paper=模拟盘, live=实盘")
     parser.add_argument("--interval", type=int, default=60, help="检查间隔（秒）")
-    parser.add_argument("--live", action="store_true", help="实盘模式（默认模拟）")
+
+    # 交易限制
+    parser.add_argument("--max-trades", type=int, help="每日最大交易次数")
+    parser.add_argument("--max-amount", type=int, help="单笔最大金额")
+    parser.add_argument("--max-volume", type=int, help="单笔最大股数")
+    parser.add_argument("--min-interval", type=int, help="最小交易间隔（秒）")
+    parser.add_argument("--max-daily-amount", type=int, help="每日最大交易总额")
+
     args = parser.parse_args()
 
     symbols = [s.strip() for s in args.symbol.split(",")]
+
+    # 构建自定义限制
+    custom_limits = {}
+    if args.max_trades:
+        custom_limits["max_trades_per_day"] = args.max_trades
+    if args.max_amount:
+        custom_limits["max_amount_per_trade"] = args.max_amount
+    if args.max_volume:
+        custom_limits["max_volume_per_trade"] = args.max_volume
+    if args.min_interval:
+        custom_limits["min_trade_interval"] = args.min_interval
+    if args.max_daily_amount:
+        custom_limits["max_daily_amount"] = args.max_daily_amount
+
     start_live_trading(
         symbols=symbols,
         strategy_name=args.strategy,
+        trading_mode=args.mode,
         check_interval=args.interval,
-        dry_run=not args.live,
+        custom_limits=custom_limits if custom_limits else None,
     )

@@ -30,14 +30,40 @@ DATA_SOURCES = [
     {"name": "YahooFinance", "priority": 3, "enabled": False},  # 港股/美股
 ]
 
+# ===== 交易模式 =====
+# 模式: "paper"=模拟盘, "live"=实盘
+TRADING_MODE = os.getenv("TRADING_MODE", "paper")
+
+# 实盘券商配置（按需启用）
+BROKER_CONFIG = {
+    "vnpy": {
+        "gateway": "CTP",           # CTP / XTP / 其他
+        "user_id": os.getenv("BROKER_USER", ""),
+        "password": os.getenv("BROKER_PASS", ""),
+        "broker_id": os.getenv("BROKER_ID", ""),
+        "td_address": os.getenv("BROKER_ADDR", ""),
+    },
+}
+
 # ===== 交易参数 =====
 TRADE_CONFIG = {
     "commission_rate": 0.00025,    # 佣金 万2.5
     "commission_min": 5.0,         # 最低佣金 5元
     "stamp_tax": 0.001,            # 印花税 千1 (卖出)
     "transfer_fee": 0.00001,       # 过户费 万0.1
-    "slippage": 0.0,               # 滑点(百分比)
+    "slippage": 0.001,             # 滑点(百分比) 默认千1
     "min_volume": 100,             # 最小交易单位 1手
+}
+
+# ===== 每日交易限制 =====
+DAILY_LIMITS = {
+    "max_trades_per_day": 10,       # 每日最大交易次数
+    "max_amount_per_trade": 100000, # 单笔最大金额
+    "max_volume_per_trade": 10000,  # 单笔最大股数
+    "min_trade_interval": 300,      # 最小交易间隔（秒）5分钟
+    "max_daily_amount": 500000,     # 每日最大交易总额
+    "max_daily_buy_amount": 300000, # 每日最大买入金额
+    "max_daily_sell_amount": 300000,# 每日最大卖出金额
 }
 
 # ===== 风控参数 =====
