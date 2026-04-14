@@ -10,8 +10,7 @@ venv/
 
 # Data & results
 data/astock.db
-trades_*.csv
-equity_*.csv
+results/
 logs/
 
 # Config with secrets

@@ -1,32 +1,35 @@
-"""策略基类"""
+"""策略基类 - 多标的版本"""
 from abc import ABC, abstractmethod
-import pandas as pd
 
 
 class BaseStrategy(ABC):
-    """策略基类，所有策略需继承此类"""
+    """
+    策略基类
+    context 结构:
+        data: {symbol: 到当前的历史DataFrame}
+        current_bar: {symbol: 当前K线}
+        positions: {symbol: volume}
+        cash: float
+        total_value: float
+        date: 当前日期
+    """
 
     def __init__(self, name: str, params: dict = None):
         self.name = name
         self.params = params or {}
-        self.positions = {}  # {symbol: volume}
-        self.cash = 1000000.0  # 初始资金100万
 
     @abstractmethod
-    def on_bar(self, symbol: str, bar: pd.Series, context: dict) -> dict:
+    def on_bar(self, context: dict) -> list:
         """
-        每根K线调用，返回交易信号
-        Returns: {"action": "buy"/"sell"/"hold", "volume": int}
+        返回信号列表
+        每个信号: {"action": "buy"/"sell", "symbol": str, "volume": int, "reason": str}
         """
         pass
 
-    def buy(self, symbol: str, volume: int, price: float) -> dict:
-        """生成买入信号"""
-        return {"action": "buy", "symbol": symbol, "volume": volume, "price": price}
+    @staticmethod
+    def buy(symbol: str, volume: int, reason: str = "") -> dict:
+        return {"action": "buy", "symbol": symbol, "volume": volume, "reason": reason}
 
-    def sell(self, symbol: str, volume: int, price: float) -> dict:
-        """生成卖出信号"""
-        return {"action": "sell", "symbol": symbol, "volume": volume, "price": price}
-
-    def hold(self) -> dict:
-        return {"action": "hold"}
+    @staticmethod
+    def sell(symbol: str, volume: int, reason: str = "") -> dict:
+        return {"action": "sell", "symbol": symbol, "volume": volume, "reason": reason}
