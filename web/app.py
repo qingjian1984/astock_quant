@@ -1,8 +1,11 @@
 """Web 管理界面 - A股量化交易系统"""
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 import json
 import os
+import threading
+import uuid
+import time
 from datetime import datetime
 from pathlib import Path
 import sys
@@ -13,21 +16,90 @@ import config
 app = Flask(__name__, template_folder="templates", static_folder="static")
 CORS(app)
 
-# 配置持久化目录
+# ========== 目录 ==========
 CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 CONFIG_DIR.mkdir(exist_ok=True)
 CONFIG_FILE = CONFIG_DIR / "web_config.json"
 
-# 数据目录
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
+
+RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
+RESULTS_DIR.mkdir(exist_ok=True)
 
 LOG_FILE = Path(__file__).resolve().parent.parent / "logs" / "astock.log"
 LOG_FILE.parent.mkdir(exist_ok=True)
 
+# ========== 回测任务管理 ==========
+_backtest_tasks = {}  # {task_id: {status, progress, stats, error, log}}
+_backtest_lock = threading.Lock()
 
+
+def _run_backtest_task(task_id, params):
+    """后台执行回测任务"""
+    try:
+        from backtest.run import run_backtest, STRATEGIES, get_data_manager
+
+        with _backtest_lock:
+            _backtest_tasks[task_id]["status"] = "running"
+            _backtest_tasks[task_id]["progress"] = 10
+            _backtest_tasks[task_id]["log"].append(f"开始回测: {params}")
+
+        symbols = [s.strip() for s in params["symbols"].split(",") if s.strip()]
+        strategy_name = params.get("strategy", "ma_cross")
+        initial_capital = float(params.get("capital", 1000000))
+        slippage = float(params.get("slippage", 0.001))
+        source = params.get("source") or None
+
+        with _backtest_lock:
+            _backtest_tasks[task_id]["log"].append(
+                f"策略: {strategy_name}, 标的: {symbols}, 资金: {initial_capital:,.0f}")
+            _backtest_tasks[task_id]["progress"] = 20
+
+        stats = run_backtest(
+            symbols=symbols,
+            start=params.get("start", "20240101"),
+            end=params.get("end", "20241231"),
+            strategy_name=strategy_name,
+            initial_capital=initial_capital,
+            slippage=slippage,
+            plot=True,
+            source=source,
+        )
+
+        with _backtest_lock:
+            _backtest_tasks[task_id]["progress"] = 100
+            if stats:
+                _backtest_tasks[task_id]["status"] = "completed"
+                _backtest_tasks[task_id]["stats"] = stats
+                _backtest_tasks[task_id]["log"].append("回测完成!")
+
+                # 读取生成的结果文件
+                trades_file = RESULTS_DIR / "trades.csv"
+                equity_file = RESULTS_DIR / "equity.csv"
+                if trades_file.exists():
+                    import pandas as pd
+                    tdf = pd.read_csv(trades_file)
+                    _backtest_tasks[task_id]["trades"] = tdf.to_dict("records")
+                if equity_file.exists():
+                    import pandas as pd
+                    edf = pd.read_csv(equity_file)
+                    _backtest_tasks[task_id]["equity"] = edf.to_dict("records")
+            else:
+                _backtest_tasks[task_id]["status"] = "error"
+                _backtest_tasks[task_id]["error"] = "回测无结果"
+                _backtest_tasks[task_id]["log"].append("回测无结果")
+
+    except Exception as e:
+        with _backtest_lock:
+            _backtest_tasks[task_id]["status"] = "error"
+            _backtest_tasks[task_id]["error"] = str(e)
+            _backtest_tasks[task_id]["progress"] = 0
+            _backtest_tasks[task_id]["log"].append(f"错误: {e}")
+
+
+# ========== 配置持久化 ==========
 def load_web_config():
-    """加载持久化的 Web 配置"""
     if CONFIG_FILE.exists():
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -35,13 +107,11 @@ def load_web_config():
 
 
 def save_web_config(web_cfg):
-    """保存 Web 配置到文件"""
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(web_cfg, f, indent=2, ensure_ascii=False)
 
 
 def merge_config(web_cfg):
-    """合并 web 配置和默认 config，web 配置优先"""
     defaults = {
         "trading_mode": config.TRADING_MODE,
         "long_term_stocks": config.LONG_TERM_STOCKS if hasattr(config, "LONG_TERM_STOCKS") else [],
@@ -77,23 +147,18 @@ def index():
 @app.route("/api/config")
 def get_config():
     web_cfg = load_web_config()
-    merged = merge_config(web_cfg)
-    return jsonify(merged)
+    return jsonify(merge_config(web_cfg))
 
 
 @app.route("/api/config", methods=["POST"])
 def save_config():
-    """保存部分配置"""
     data = request.json
     web_cfg = load_web_config()
-
-    # 支持的配置项
     allowed_keys = ["trading_mode", "swing_config", "trade_limits",
                     "trade_params", "risk_params", "data_sources", "broker_config"]
     for key in allowed_keys:
         if key in data:
             web_cfg[key] = data[key]
-
     save_web_config(web_cfg)
     return jsonify({"status": "success", "message": "配置已保存"})
 
@@ -171,7 +236,13 @@ def save_data_sources():
     data = request.json
     web_cfg = load_web_config()
     if "sources" in data:
-        web_cfg["data_sources"] = data["sources"]
+        existing = web_cfg.get("data_sources", config.DATA_SOURCES)
+        for src in data["sources"]:
+            for ex in existing:
+                if ex["name"] == src["name"]:
+                    ex["enabled"] = src.get("enabled", ex.get("enabled", True))
+                    break
+        web_cfg["data_sources"] = existing
     if "tushare_token" in data:
         web_cfg["tushare_token"] = data["tushare_token"]
     save_web_config(web_cfg)
@@ -185,9 +256,7 @@ def get_long_term():
     if long_term_file.exists():
         with open(long_term_file, "r", encoding="utf-8") as f:
             return jsonify(json.load(f))
-    # 返回默认配置
-    default_stocks = config.LONG_TERM_STOCKS if hasattr(config, "LONG_TERM_STOCKS") else []
-    return jsonify(default_stocks)
+    return jsonify(config.LONG_TERM_STOCKS if hasattr(config, "LONG_TERM_STOCKS") else [])
 
 
 @app.route("/api/longterm", methods=["POST"])
@@ -196,30 +265,20 @@ def add_long_term():
     symbol = data.get("symbol", "")
     name = data.get("name", "")
     capital = data.get("capital", 100000)
-
     long_term_file = DATA_DIR / "long_term_stocks.json"
     stocks = []
     if long_term_file.exists():
         with open(long_term_file, "r", encoding="utf-8") as f:
             stocks = json.load(f)
-
-    # 检查是否已存在
     for s in stocks:
         if s["symbol"] == symbol:
             return jsonify({"status": "error", "message": f"{symbol} 已存在"}), 400
-
     stocks.append({
-        "symbol": symbol,
-        "name": name,
-        "min_capital": capital,
-        "added_at": datetime.now().isoformat(),
-        "strategy": None,
-        "score": None,
+        "symbol": symbol, "name": name, "min_capital": capital,
+        "added_at": datetime.now().isoformat(), "strategy": None, "score": None,
     })
-
     with open(long_term_file, "w", encoding="utf-8") as f:
         json.dump(stocks, f, indent=2, ensure_ascii=False)
-
     return jsonify({"status": "success", "stocks": stocks})
 
 
@@ -227,19 +286,14 @@ def add_long_term():
 def remove_long_term():
     data = request.json
     symbol = data.get("symbol", "")
-
     long_term_file = DATA_DIR / "long_term_stocks.json"
     if long_term_file.exists():
         with open(long_term_file, "r", encoding="utf-8") as f:
             stocks = json.load(f)
-
         stocks = [s for s in stocks if s["symbol"] != symbol]
-
         with open(long_term_file, "w", encoding="utf-8") as f:
             json.dump(stocks, f, indent=2, ensure_ascii=False)
-
         return jsonify({"status": "success", "stocks": stocks})
-
     return jsonify({"status": "error", "message": "文件不存在"}), 404
 
 
@@ -248,18 +302,14 @@ def remove_long_term():
 def get_status():
     web_cfg = load_web_config()
     merged = merge_config(web_cfg)
-
     long_term_file = DATA_DIR / "long_term_stocks.json"
     lt_count = len(merged.get("long_term_stocks", []))
     if long_term_file.exists():
         with open(long_term_file, "r", encoding="utf-8") as f:
             lt_count = len(json.load(f))
-
     return jsonify({
-        "running": False,
-        "mode": merged.get("trading_mode", "paper"),
-        "long_term_count": lt_count,
-        "swing_config": merged.get("swing_config", {}),
+        "running": False, "mode": merged.get("trading_mode", "paper"),
+        "long_term_count": lt_count, "swing_config": merged.get("swing_config", {}),
         "trade_limits": merged.get("trade_limits", {}),
         "risk_params": merged.get("risk_params", {}),
     })
@@ -283,55 +333,43 @@ def run_optimize():
         from core.optimizer import StrategyOptimizer
         from data.manager import DataSourceManager
         from data.sources.baostock_src import BaoStockSource
-
         data = request.json
         symbol = data.get("symbol", "000001")
-
         dm = DataSourceManager()
         dm.register(BaoStockSource())
         dm.connect_all()
-
         df = dm.fetch_daily(symbol, "20200101", "20241231")
         if df.empty:
             return jsonify({"status": "error", "message": "无法获取数据"}), 400
-
         optimizer = StrategyOptimizer()
         result = optimizer.optimize(symbol, df)
-
-        # 保存优化结果到长线股
         long_term_file = DATA_DIR / "long_term_stocks.json"
         stocks = []
         if long_term_file.exists():
             with open(long_term_file, "r", encoding="utf-8") as f:
                 stocks = json.load(f)
-
         for s in stocks:
             if s["symbol"] == symbol:
                 s["strategy"] = result.get("strategy")
                 s["score"] = result.get("score")
                 s["optimized_at"] = datetime.now().isoformat()
                 break
-
         with open(long_term_file, "w", encoding="utf-8") as f:
             json.dump(stocks, f, indent=2, ensure_ascii=False)
-
         return jsonify({"status": "success", "result": result})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-# ========== 数据源测试 ==========
+# ========== 数据源 ==========
 @app.route("/api/data_sources/test", methods=["POST"])
 def test_data_source():
     data = request.json
     source_name = data.get("source", "AKShare")
     symbol = data.get("symbol", "000001")
-
     try:
         from data.manager import DataSourceManager
-
         dm = DataSourceManager()
-
         if source_name == "AKShare":
             from data.sources.akshare_src import AKShareSource
             dm.register(AKShareSource())
@@ -340,23 +378,348 @@ def test_data_source():
             dm.register(BaoStockSource())
         elif source_name == "Tushare":
             from data.sources.tushare_src import TushareSource
-            dm.register(TushareSource())
+            dm.register(TushareSource(token=config.TUSHARE_TOKEN))
         elif source_name == "YahooFinance":
-            from data.sources.yahoo_src import YahooSource
-            dm.register(YahooSource())
-
+            from data.sources.yahoo_src import YahooFinanceSource
+            dm.register(YahooFinanceSource())
         dm.connect_all()
         df = dm.fetch_daily(symbol, "20240101", "20240331")
-
         return jsonify({
-            "status": "success",
-            "source": source_name,
-            "rows": len(df),
-            "columns": list(df.columns) if not df.empty else [],
+            "status": "success", "source": source_name,
+            "rows": len(df), "columns": list(df.columns) if not df.empty else [],
             "latest_date": str(df.index[-1]) if not df.empty else "N/A",
         })
     except Exception as e:
         return jsonify({"status": "error", "source": source_name, "message": str(e)}), 500
+
+
+@app.route("/api/data_sources/list")
+def list_data_sources():
+    """列出所有数据源状态"""
+    try:
+        from data.manager import DataSourceManager
+        dm = DataSourceManager()
+        web_cfg = load_web_config()
+        merged = merge_config(web_cfg)
+        for ds_cfg in merged.get("data_sources", config.DATA_SOURCES):
+            if not ds_cfg.get("enabled"):
+                continue
+            name = ds_cfg["name"]
+            if name == "AKShare":
+                from data.sources.akshare_src import AKShareSource
+                dm.register(AKShareSource(retry=config.AKSHARE_RETRY))
+            elif name == "BaoStock":
+                from data.sources.baostock_src import BaoStockSource
+                dm.register(BaoStockSource())
+            elif name == "Tushare" and config.TUSHARE_TOKEN:
+                from data.sources.tushare_src import TushareSource
+                dm.register(TushareSource(token=config.TUSHARE_TOKEN))
+            elif name == "YahooFinance":
+                from data.sources.yahoo_src import YahooFinanceSource
+                dm.register(YahooFinanceSource())
+
+        sources_info = []
+        for s in dm.list_sources():
+            sources_info.append({
+                "name": s.name,
+                "priority": s.priority,
+                "available": s.is_available(),
+            })
+        return jsonify({"status": "success", "sources": sources_info})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/data_sources/compare", methods=["POST"])
+def compare_data_sources():
+    """对比多个数据源的数据质量"""
+    try:
+        from data.manager import DataSourceManager
+        data = request.json
+        symbol = data.get("symbol", "000001")
+        start = data.get("start", "20240101")
+        end = data.get("end", "20241231")
+
+        dm = DataSourceManager()
+        web_cfg = load_web_config()
+        merged = merge_config(web_cfg)
+        for ds_cfg in merged.get("data_sources", config.DATA_SOURCES):
+            if not ds_cfg.get("enabled"):
+                continue
+            name = ds_cfg["name"]
+            if name == "AKShare":
+                from data.sources.akshare_src import AKShareSource
+                dm.register(AKShareSource(retry=config.AKSHARE_RETRY))
+            elif name == "BaoStock":
+                from data.sources.baostock_src import BaoStockSource
+                dm.register(BaoStockSource())
+            elif name == "Tushare" and config.TUSHARE_TOKEN:
+                from data.sources.tushare_src import TushareSource
+                dm.register(TushareSource(token=config.TUSHARE_TOKEN))
+            elif name == "YahooFinance":
+                from data.sources.yahoo_src import YahooFinanceSource
+                dm.register(YahooFinanceSource())
+
+        dm.connect_all()
+        comparison = dm.compare_sources(symbol, start, end)
+        if comparison.empty:
+            return jsonify({"status": "error", "message": "无可用数据"})
+        return jsonify({
+            "status": "success",
+            "comparison": comparison.to_dict("records"),
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ========== 回测 API ==========
+@app.route("/api/backtest/strategies")
+def get_strategies():
+    """获取可用策略列表"""
+    return jsonify({
+        "strategies": [
+            {"name": "ma_cross", "label": "双均线策略", "desc": "MA5上穿MA20买入，下穿卖出", "params": {"fast": [3, 10], "slow": [15, 30]}},
+            {"name": "rsi", "label": "RSI均值回归", "desc": "RSI<30超卖买入，>70超买卖出", "params": {"period": [10, 21]}},
+            {"name": "macd", "label": "MACD趋势跟踪", "desc": "DIF上穿DEA买入，下穿卖出", "params": {"fast": [8, 15], "slow": [21, 30], "signal": [5, 12]}},
+            {"name": "multi_factor", "label": "多因子选股", "desc": "动量+波动率+成交量综合评分", "params": {"top_n": [3, 10], "rebalance_days": [10, 30]}},
+        ],
+        "data_sources": [s["name"] for s in config.DATA_SOURCES if s.get("enabled")],
+    })
+
+
+@app.route("/api/backtest/run", methods=["POST"])
+def start_backtest():
+    """启动回测任务"""
+    data = request.json
+    task_id = str(uuid.uuid4())[:8]
+    with _backtest_lock:
+        _backtest_tasks[task_id] = {
+            "status": "pending", "progress": 0, "stats": None,
+            "error": None, "log": [], "trades": None, "equity": None,
+            "created_at": datetime.now().isoformat(),
+            "params": data,
+        }
+    t = threading.Thread(target=_run_backtest_task, args=(task_id, data), daemon=True)
+    t.start()
+    return jsonify({"status": "started", "task_id": task_id})
+
+
+@app.route("/api/backtest/status/<task_id>")
+def backtest_status(task_id):
+    """查询回测任务状态"""
+    with _backtest_lock:
+        task = _backtest_tasks.get(task_id)
+    if not task:
+        return jsonify({"status": "error", "message": "任务不存在"}), 404
+    return jsonify({
+        "task_id": task_id,
+        "status": task["status"],
+        "progress": task["progress"],
+        "stats": task["stats"],
+        "error": task["error"],
+        "log": task["log"][-20:],
+        "trades_count": len(task["trades"]) if task["trades"] else 0,
+        "equity_count": len(task["equity"]) if task["equity"] else 0,
+    })
+
+
+@app.route("/api/backtest/result/<task_id>")
+def backtest_result(task_id):
+    """获取回测完整结果"""
+    with _backtest_lock:
+        task = _backtest_tasks.get(task_id)
+    if not task:
+        return jsonify({"status": "error", "message": "任务不存在"}), 404
+    if task["status"] != "completed":
+        return jsonify({"status": "error", "message": f"任务未完成: {task['status']}"}), 400
+
+    # 分页返回交易记录
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 50, type=int)
+    trades = task.get("trades") or []
+    equity = task.get("equity") or []
+
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+
+    return jsonify({
+        "status": "success",
+        "task_id": task_id,
+        "stats": task["stats"],
+        "trades": trades[start_idx:end_idx],
+        "trades_total": len(trades),
+        "equity": equity,
+        "params": task["params"],
+    })
+
+
+# ========== 历史回测结果 ==========
+@app.route("/api/backtest/history")
+def backtest_history():
+    """列出历史回测结果文件"""
+    if not RESULTS_DIR.exists():
+        return jsonify({"files": []})
+    files = []
+    for f in RESULTS_DIR.iterdir():
+        if f.is_file():
+            stat = f.stat()
+            files.append({
+                "name": f.name,
+                "size": stat.st_size,
+                "mtime": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                "type": f.suffix,
+            })
+    files.sort(key=lambda x: x["mtime"], reverse=True)
+    return jsonify({"files": files})
+
+
+@app.route("/api/results/<filename>")
+def serve_result_file(filename):
+    """提供结果文件下载/查看"""
+    filepath = RESULTS_DIR / filename
+    if not filepath.exists():
+        return jsonify({"error": "文件不存在"}), 404
+    if filename.endswith(".csv"):
+        import pandas as pd
+        df = pd.read_csv(filepath)
+        page = request.args.get("page", 1, type=int)
+        per_page = request.args.get("per_page", 100, type=int)
+        total = len(df)
+        start = (page - 1) * per_page
+        end = start + per_page
+        return jsonify({
+            "columns": list(df.columns),
+            "data": df.iloc[start:end].to_dict("records"),
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+        })
+    elif filename.endswith(".png"):
+        return send_file(filepath, mimetype="image/png")
+    return send_file(filepath)
+
+
+@app.route("/api/results/images")
+def result_images():
+    """列出结果图片"""
+    if not RESULTS_DIR.exists():
+        return jsonify({"images": []})
+    images = []
+    for f in RESULTS_DIR.glob("*.png"):
+        images.append({
+            "name": f.name,
+            "url": f"/api/results/{f.name}",
+        })
+    return jsonify({"images": images})
+
+
+# ========== 股票列表 ==========
+@app.route("/api/stocks", methods=["GET"])
+def get_stock_list():
+    """获取股票列表"""
+    try:
+        from data.manager import DataSourceManager
+        web_cfg = load_web_config()
+        merged = merge_config(web_cfg)
+        dm = DataSourceManager()
+        for ds_cfg in merged.get("data_sources", config.DATA_SOURCES):
+            if not ds_cfg.get("enabled"):
+                continue
+            name = ds_cfg["name"]
+            if name == "AKShare":
+                from data.sources.akshare_src import AKShareSource
+                dm.register(AKShareSource(retry=config.AKSHARE_RETRY))
+            elif name == "BaoStock":
+                from data.sources.baostock_src import BaoStockSource
+                dm.register(BaoStockSource())
+            elif name == "Tushare" and config.TUSHARE_TOKEN:
+                from data.sources.tushare_src import TushareSource
+                dm.register(TushareSource(token=config.TUSHARE_TOKEN))
+        dm.connect_all()
+        stock_list = dm.fetch_stock_list()
+        if stock_list.empty:
+            return jsonify({"status": "error", "message": "无法获取股票列表"})
+        # 限制返回数量
+        limit = request.args.get("limit", 5000, type=int)
+        stock_list = stock_list.head(limit)
+        return jsonify({
+            "status": "success",
+            "total": len(stock_list),
+            "stocks": stock_list.to_dict("records"),
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ========== 数据下载 ==========
+@app.route("/api/data/fetch", methods=["POST"])
+def fetch_data():
+    """手动下载股票数据"""
+    try:
+        from data.manager import DataSourceManager
+        data = request.json
+        symbol = data.get("symbol", "000001")
+        start = data.get("start", "20240101")
+        end = data.get("end", "20241231")
+
+        dm = DataSourceManager()
+        web_cfg = load_web_config()
+        merged = merge_config(web_cfg)
+        for ds_cfg in merged.get("data_sources", config.DATA_SOURCES):
+            if not ds_cfg.get("enabled"):
+                continue
+            name = ds_cfg["name"]
+            if name == "AKShare":
+                from data.sources.akshare_src import AKShareSource
+                dm.register(AKShareSource(retry=config.AKSHARE_RETRY))
+            elif name == "BaoStock":
+                from data.sources.baostock_src import BaoStockSource
+                dm.register(BaoStockSource())
+            elif name == "Tushare" and config.TUSHARE_TOKEN:
+                from data.sources.tushare_src import TushareSource
+                dm.register(TushareSource(token=config.TUSHARE_TOKEN))
+        dm.connect_all()
+        df = dm.fetch_daily(symbol, start, end)
+        if df.empty:
+            return jsonify({"status": "error", "message": "未获取到数据"})
+        return jsonify({
+            "status": "success",
+            "symbol": symbol,
+            "rows": len(df),
+            "start_date": str(df.index[0]),
+            "end_date": str(df.index[-1]),
+            "columns": list(df.columns),
+            "preview": df.head(5).to_dict("records"),
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ========== 批量回测 ==========
+@app.route("/api/backtest/batch", methods=["POST"])
+def batch_backtest():
+    """批量回测多个策略"""
+    data = request.json
+    symbols = [s.strip() for s in data.get("symbols", "000001").split(",") if s.strip()]
+    strategies = data.get("strategies", ["ma_cross", "rsi", "macd"])
+    start = data.get("start", "20240101")
+    end = data.get("end", "20241231")
+    capital = float(data.get("capital", 1000000))
+
+    try:
+        from backtest.run import run_backtest
+        results = []
+        for strategy in strategies:
+            stats = run_backtest(
+                symbols=symbols, start=start, end=end,
+                strategy_name=strategy, initial_capital=capital,
+                plot=False,
+            )
+            if stats:
+                results.append({"strategy": strategy, "stats": stats})
+        return jsonify({"status": "success", "results": results})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 if __name__ == "__main__":
