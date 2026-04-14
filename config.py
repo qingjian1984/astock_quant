@@ -18,9 +18,17 @@ DB_CONFIG = {
 DB_ACTIVE = "sqlite"  # 切换 "sqlite" 或 "postgresql"
 
 # ===== 数据源 =====
-TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "")  # 可选
 AKSHARE_RETRY = 3
 AKSHARE_TIMEOUT = 30
+TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "")
+
+# 数据源优先级（数字越大越优先）
+DATA_SOURCES = [
+    {"name": "AKShare", "priority": 10, "enabled": True},
+    {"name": "Tushare", "priority": 8, "enabled": TUSHARE_TOKEN != ""},
+    {"name": "BaoStock", "priority": 5, "enabled": True},
+    {"name": "YahooFinance", "priority": 3, "enabled": False},  # 港股/美股
+]
 
 # ===== 交易参数 =====
 TRADE_CONFIG = {
