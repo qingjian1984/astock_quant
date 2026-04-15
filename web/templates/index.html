@@ -770,13 +770,23 @@
 
         <div class="card" style="margin-bottom: 20px;">
             <div class="form-row">
-                <div class="form-group">
+                <div class="form-group" style="position: relative;">
                     <label class="form-label">股票代码</label>
-                    <input class="form-input" id="ltSymbol" placeholder="000001">
+                    <input class="form-input" id="ltSymbol" placeholder="输入代码自动搜索..." oninput="debounceSearch(this.value.trim())" onblur="autoFillStockName(this.value.trim())" autocomplete="off">
+                    <div id="stockSuggestions" style="position: absolute; top: 100%; left: 0; right: 0; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm); margin-top: 4px; max-height: 200px; overflow-y: auto; z-index: 100; display: none;"></div>
+            <script>
+            // 添加建议列表功能
+            document.getElementById('ltSymbol').addEventListener('focus', function() {
+                showSuggestions(this.value.trim());
+            });
+            document.getElementById('ltSymbol').addEventListener('blur', function() {
+                setTimeout(() => document.getElementById('stockSuggestions').style.display = 'none', 200);
+            });
+            </script>
                 </div>
                 <div class="form-group">
                     <label class="form-label">股票名称</label>
-                    <input class="form-input" id="ltName" placeholder="平安银行">
+                    <input class="form-input" id="ltName" placeholder="自动带出" readonly style="background: var(--bg-secondary); cursor: not-allowed;">
                 </div>
                 <div class="form-group">
                     <label class="form-label">分配资金 (元)</label>
@@ -1347,18 +1357,35 @@ async function loadLongTerm() {
 }
 async function addLongTerm() {
     const sym = document.getElementById('ltSymbol').value.trim();
+    const name = document.getElementById('ltName').value.trim();
+    const capital = parseInt(document.getElementById('ltCapital').value);
     if (!sym) return showToast('请输入股票代码', 'error');
-    const res = await fetch('/api/longterm', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ symbol: sym, name: document.getElementById('ltName').value.trim(), capital: parseInt(document.getElementById('ltCapital').value) })
-    });
-    const d = await res.json();
-    if (d.status === 'success') {
-        showToast('添加成功');
-        document.getElementById('ltSymbol').value = '';
-        document.getElementById('ltName').value = '';
-        loadLongTerm();
-    } else showToast(d.message, 'error');
+    
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '⏳ 添加中...';
+    
+    try {
+        const res = await fetch('/api/longterm', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ symbol: sym, name: name || '未命名', capital: capital || 100000 })
+        });
+        const d = await res.json();
+        if (d.status === 'success') {
+            showToast('✅ 已添加 ' + sym + (name ? ' (' + name + ')' : ''));
+            document.getElementById('ltSymbol').value = '';
+            document.getElementById('ltName').value = '';
+            document.getElementById('ltSymbol').focus();
+            loadLongTerm();
+        } else {
+            showToast('添加失败: ' + (d.message || '未知错误'), 'error');
+        }
+    } catch(e) {
+        showToast('网络错误: ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '+ 添加';
+    }
 }
 async function removeLongTerm(sym) {
     if (!confirm('确定删除 ' + sym + '？')) return;
@@ -1460,6 +1487,77 @@ async function compareSources() {
     } else showToast('对比失败: ' + d.message, 'error');
 }
 
+// 内置股票代码映射表 (后备方案)
+const BUILTIN_STOCKS = {
+    '000001': '平安银行', '000002': '万 科Ａ', '000063': '中兴通讯',
+    '000100': 'TCL科技', '000157': '中联重科', '000333': '美的集团',
+    '000568': '泸州老窖', '000651': '格力电器', '000725': '京东方Ａ',
+    '000858': '五 粮 液', '002027': '分众传媒', '002049': '紫光国微',
+    '002230': '科大讯飞', '002304': '洋河股份', '002352': '顺丰控股',
+    '002415': '海康威视', '002475': '立讯精密', '002594': '比亚迪',
+    '002714': '牧原股份', '300015': '爱尔眼科', '300059': '东方财富',
+    '300322': '硕贝德', '300450': '先导智能', '300750': '宁德时代',
+    '600000': '浦发银行', '600009': '上海机场', '600016': '民生银行',
+    '600018': '上港集团', '600028': '中国石化', '600030': '中信证券',
+    '600031': '三一重工', '600036': '招商银行', '600048': '保利发展',
+    '600050': '中国联通', '600104': '上汽集团', '600111': '北方稀土',
+    '600196': '复星医药', '600276': '恒瑞医药', '600309': '万华化学',
+    '600436': '片仔癀', '600438': '通威股份', '600519': '贵州茅台',
+    '600585': '海螺水泥', '600588': '用友网络', '600690': '海尔智家',
+    '600745': '闻泰科技', '600809': '山西汾酒', '600887': '伊利股份',
+    '600900': '长江电力', '601012': '隆基绿能', '601088': '中国神华',
+    '601166': '兴业银行', '601225': '陕西煤业', '601288': '农业银行',
+    '601318': '中国平安', '601398': '工商银行', '601601': '中国太保',
+    '601628': '中国人寿', '601668': '中国建筑', '601669': '中国电建',
+    '601766': '中国中车', '601816': '京沪高铁', '601857': '中国石油',
+    '601888': '中国中免', '601899': '紫金矿业', '601919': '中远海控',
+    '601985': '中国核电', '601988': '中国银行', '603259': '药明康德',
+    '603288': '海天味业', '603501': '韦尔股份', '603799': '华友钴业',
+    '603986': '兆易创新', '605117': '德业股份',
+};
+
+// 股票名称自动补全
+let stockSearchCache = null;
+async function initStockSearch() {
+    if (stockSearchCache) return stockSearchCache;
+    // 直接使用内置表，不依赖慢速 API
+    stockSearchCache = Object.entries(BUILTIN_STOCKS).map(([code, name]) => ({symbol: code, name}));
+    // 后台尝试加载完整列表 (不阻塞)
+    fetch('/api/stocks?limit=5000', {signal: AbortSignal.timeout(3000)})
+        .then(r => r.json())
+        .then(d => { if (d.status === 'success') stockSearchCache = d.stocks; })
+        .catch(() => {});
+    return stockSearchCache;
+}
+
+async function autoFillStockName(code) {
+    if (!code || code.length < 3) {
+        document.getElementById('ltName').value = '';
+        return;
+    }
+    const stocks = await initStockSearch();
+    
+    // 确定代码字段名
+    const codeKey = stocks.length > 0 ? Object.keys(stocks[0]).find(k => /code|symbol/i.test(k)) || Object.keys(stocks[0])[0] : 'symbol';
+    const nameKey = stocks.length > 0 ? Object.keys(stocks[0]).find(k => /name/i.test(k)) || Object.keys(stocks[0])[1] : 'name';
+    
+    // 精确匹配优先
+    let match = stocks.find(s => String(s[codeKey] || '') === code);
+    // 模糊匹配
+    if (!match) {
+        match = stocks.find(s => String(s[codeKey] || '').includes(code));
+    }
+    
+    if (match) {
+        const name = match[nameKey] || '';
+        document.getElementById('ltName').value = name;
+        showToast('🔍 找到: ' + name + ' (' + (match[codeKey] || code) + ')', 'info');
+    } else {
+        document.getElementById('ltName').value = '';
+        showToast('⚠️ 未找到代码 ' + code + ' 对应的股票', 'warning');
+    }
+}
+
 async function loadStockList() {
     showToast('正在加载股票列表...', 'info');
     const res = await fetch('/api/stocks?limit=5000');
@@ -1549,9 +1647,50 @@ function toggleAutoRefresh() {
     else { autoRefresh = setInterval(loadLogs, 5000); btn.textContent = '⏸ 停止刷新'; btn.className = 'btn btn-danger'; showToast('已启动 (5秒刷新)', 'info'); }
 }
 
+// ========== 股票搜索防抖 ==========
+let searchTimer = null;
+function debounceSearch(code) {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(async () => {
+        autoFillStockName(code);
+        showSuggestions(code);
+    }, 300);
+}
+
+async function showSuggestions(code) {
+    const box = document.getElementById('stockSuggestions');
+    if (!code || code.length < 2) {
+        box.style.display = 'none';
+        return;
+    }
+    const stocks = await initStockSearch();
+    const codeKey = stocks.length > 0 ? Object.keys(stocks[0]).find(k => /code|symbol/i.test(k)) || Object.keys(stocks[0])[0] : 'symbol';
+    const nameKey = stocks.length > 0 ? Object.keys(stocks[0]).find(k => /name/i.test(k)) || Object.keys(stocks[0])[1] : 'name';
+    
+    const matches = stocks.filter(s => String(s[codeKey] || '').includes(code)).slice(0, 10);
+    if (matches.length === 0) {
+        box.style.display = 'none';
+        return;
+    }
+    
+    box.innerHTML = matches.map(s => `<div style="padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--border-color); font-size: 13px;" 
+        onclick="selectStock('${s[codeKey] || ''}', '${s[nameKey] || ''}')">
+        <strong>${s[codeKey] || ''}</strong> - ${s[nameKey] || ''}
+    </div>`).join('');
+    box.style.display = 'block';
+}
+
+function selectStock(code, name) {
+    document.getElementById('ltSymbol').value = code;
+    document.getElementById('ltName').value = name;
+    document.getElementById('stockSuggestions').style.display = 'none';
+    showToast('✅ 已选择: ' + name + ' (' + code + ')', 'success');
+}
+
 // ========== 初始化 ==========
 loadConfig();
 loadLogs();
+initStockSearch();  // 预加载股票列表
 </script>
 
 </body>
