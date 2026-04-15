@@ -34,6 +34,20 @@ LOG_FILE.parent.mkdir(exist_ok=True)
 _backtest_tasks = {}  # {task_id: {status, progress, stats, error, log}}
 _backtest_lock = threading.Lock()
 
+# ========== 波段股运行状态 ==========
+_swing_state = {
+    "running": False,
+    "task": None,
+    "log": [],
+    "last_scan": None,
+    "candidates": [],
+    "positions": [],
+    "start_time": None,
+    "scan_count": 0,
+    "trade_count": 0,
+}
+_swing_lock = threading.Lock()
+
 
 def _run_backtest_task(task_id, params):
     """后台执行回测任务"""
@@ -186,7 +200,200 @@ def save_swing_config():
     })
     web_cfg["swing_config"] = swing
     save_web_config(web_cfg)
+    
+    # 记录配置变更日志
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _swing_lock:
+        _swing_state["log"].append(f"[{ts}] 波段配置已更新: 扫描间隔={swing['scan_interval']}s, 最大持仓={swing['max_positions']}, 策略={swing['strategies']}, 止损={swing['stop_loss_pct']:.0%}, 止盈={swing['take_profit_pct']:.0%}")
+        # 保持日志最近 200 条
+        if len(_swing_state["log"]) > 200:
+            _swing_state["log"] = _swing_state["log"][-200:]
+    
     return jsonify({"status": "success", "swing_config": swing})
+
+
+# ========== 波段股运行管理 ==========
+def _run_swing_engine():
+    """后台运行波段股扫描引擎"""
+    try:
+        from data.manager import DataSourceManager
+        from data.sources.baostock_src import BaoStockSource
+        from live.scanner import StockScanner
+        from live.trader import TradeSimulator
+        from strategy.ma_cross import MACrossStrategy
+        from strategy.macd import MACDStrategy
+        from strategy.rsi import RSIStrategy
+        import config as sys_config
+        
+        web_cfg = load_web_config()
+        merged = merge_config(web_cfg)
+        swing_cfg = merged.get("swing_config", {})
+        
+        scan_interval = swing_cfg.get("scan_interval", 3600)
+        max_positions = swing_cfg.get("max_positions", 5)
+        strategies = swing_cfg.get("strategies", ["ma_cross", "macd"])
+        stop_loss = swing_cfg.get("stop_loss_pct", -0.05)
+        take_profit = swing_cfg.get("take_profit_pct", 0.10)
+        
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with _swing_lock:
+            _swing_state["log"].append(f"[{ts}] 波段引擎启动 - 扫描间隔: {scan_interval}s, 策略: {strategies}")
+            _swing_state["start_time"] = datetime.now().isoformat()
+            _swing_state["scan_count"] = 0
+            _swing_state["trade_count"] = 0
+        
+        # 初始化数据源
+        dm = DataSourceManager()
+        dm.register(BaoStockSource())
+        dm.connect_all()
+        
+        # 初始化扫描器
+        scanner = StockScanner(dm)
+        
+        # 策略映射
+        strat_map = {
+            "ma_cross": lambda: MACrossStrategy(fast=5, slow=20),
+            "macd": lambda: MACDStrategy(fast=12, slow=26, signal=9),
+            "rsi": lambda: RSIStrategy(period=14),
+        }
+        
+        # 获取股票池 (简化版，取部分股票)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with _swing_lock:
+            _swing_state["log"].append(f"[{ts}] 正在获取股票池...")
+        
+        stock_pool = ["000001", "000002", "000063", "000100", "000157", "000333",
+                      "000568", "000651", "000725", "000858", "002027", "002049",
+                      "002230", "002304", "002352", "002415", "002475", "002594",
+                      "300015", "300059", "300750", "600000", "600016", "600028",
+                      "600030", "600031", "600036", "600048", "600050", "600104",
+                      "600276", "600309", "600519", "600585", "600887", "601012",
+                      "601166", "601318", "601398", "601668", "601857", "603288"]
+        
+        with _swing_lock:
+            _swing_state["log"].append(f"[{ts}] 股票池: {len(stock_pool)} 只股票")
+        
+        # 运行扫描
+        candidates = []
+        for strat_name in strategies:
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with _swing_lock:
+                _swing_state["log"].append(f"[{ts}] 使用 {strat_name} 策略扫描...")
+                _swing_state["scan_count"] += 1
+            
+            strat_func = strat_map.get(strat_name)
+            if not strat_func:
+                continue
+            
+            strat = strat_func()
+            scan_results = []
+            
+            for symbol in stock_pool[:20]:  # 每次扫描前20只
+                try:
+                    end_date = datetime.now().strftime("%Y%m%d")
+                    start_date = (datetime.now() - timedelta(days=60)).strftime("%Y%m%d")
+                    df = dm.fetch_daily(symbol, start_date, end_date)
+                    if df.empty or len(df) < 30:
+                        continue
+                    
+                    # 快速信号检测
+                    from backtest.engine import BacktestEngine
+                    engine = BacktestEngine(strat_func(), initial_capital=100000)
+                    engine.run({symbol: df})
+                    trades = engine.get_trades()
+                    
+                    if not trades.empty:
+                        last_trade = trades.iloc[-1]
+                        if last_trade["action"] == "buy":
+                            scan_results.append({
+                                "symbol": symbol,
+                                "strategy": strat_name,
+                                "reason": f"{strat_name} 买入信号",
+                            })
+                            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            with _swing_lock:
+                                _swing_state["log"].append(f"[{ts}] 📈 {symbol} - {strat_name} 发出买入信号")
+                except Exception as e:
+                    pass
+            
+            candidates.extend(scan_results)
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with _swing_lock:
+                _swing_state["log"].append(f"[{ts}] {strat_name} 扫描完成，发现 {len(scan_results)} 只候选")
+        
+        # 更新候选列表
+        with _swing_lock:
+            _swing_state["candidates"] = candidates[:max_positions]
+            _swing_state["last_scan"] = datetime.now().isoformat()
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            _swing_state["log"].append(f"[{ts}] 扫描完成，共 {len(candidates)} 只候选股票")
+        
+    except Exception as e:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with _swing_lock:
+            _swing_state["log"].append(f"[{ts}] ❌ 波段引擎异常: {str(e)}")
+    finally:
+        with _swing_lock:
+            _swing_state["running"] = False
+            _swing_state["task"] = None
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            _swing_state["log"].append(f"[{ts}] 波段引擎已停止")
+
+
+@app.route("/api/swing/status")
+def swing_status():
+    """获取波段股运行状态"""
+    with _swing_lock:
+        return jsonify({
+            "running": _swing_state["running"],
+            "last_scan": _swing_state["last_scan"],
+            "candidates": _swing_state["candidates"],
+            "positions": _swing_state["positions"],
+            "start_time": _swing_state["start_time"],
+            "scan_count": _swing_state["scan_count"],
+            "trade_count": _swing_state["trade_count"],
+            "log": _swing_state["log"][-50:],  # 最近50条日志
+        })
+
+
+@app.route("/api/swing/run", methods=["POST"])
+def swing_run():
+    """启动波段股扫描"""
+    with _swing_lock:
+        if _swing_state["running"]:
+            return jsonify({"status": "error", "message": "波段引擎正在运行中"})
+        
+        _swing_state["running"] = True
+        _swing_state["log"].append(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 🚀 启动波段扫描...")
+        
+        t = threading.Thread(target=_run_swing_engine, daemon=True)
+        t.start()
+        _swing_state["task"] = t
+    
+    return jsonify({"status": "success", "message": "波段扫描已启动"})
+
+
+@app.route("/api/swing/stop", methods=["POST"])
+def swing_stop():
+    """停止波段股扫描"""
+    with _swing_lock:
+        if not _swing_state["running"]:
+            return jsonify({"status": "error", "message": "波段引擎未在运行"})
+        
+        _swing_state["running"] = False
+        _swing_state["log"].append(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ⏹ 手动停止波段扫描")
+    
+    return jsonify({"status": "success", "message": "波段扫描已停止"})
+
+
+@app.route("/api/swing/log")
+def swing_log():
+    """获取波段股运行日志"""
+    with _swing_lock:
+        return jsonify({
+            "running": _swing_state["running"],
+            "log": _swing_state["log"][-100:],
+        })
 
 
 @app.route("/api/config/limits", methods=["POST"])

@@ -849,7 +849,56 @@
             </div>
         </div>
 
-        <button class="btn btn-primary" onclick="saveSwing()" style="margin-top: 16px;">💾 保存波段配置</button>
+        <div class="quick-actions">
+            <button class="btn btn-primary" onclick="saveSwing()">💾 保存配置</button>
+            <button class="btn btn-success" id="swingRunBtn" onclick="toggleSwing()">▶ 启动扫描</button>
+        </div>
+
+        <!-- 运行状态 -->
+        <div class="card" style="margin-top: 20px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;font-size:16px;">🖥️ 运行状态</h3>
+                <div id="swingStatusBadge" class="badge badge-gray">⏹ 未运行</div>
+            </div>
+            <div class="grid grid-4" style="margin-bottom:16px;">
+                <div style="text-align:center;">
+                    <div style="font-size:20px;font-weight:700;color:var(--accent);" id="swingScanCount">0</div>
+                    <div style="font-size:12px;color:var(--text-muted);">扫描次数</div>
+                </div>
+                <div style="text-align:center;">
+                    <div style="font-size:20px;font-weight:700;color:var(--success);" id="swingTradeCount">0</div>
+                    <div style="font-size:12px;color:var(--text-muted);">交易次数</div>
+                </div>
+                <div style="text-align:center;">
+                    <div style="font-size:20px;font-weight:700;color:var(--warning);" id="swingCandidateCount">0</div>
+                    <div style="font-size:12px;color:var(--text-muted);">候选股票</div>
+                </div>
+                <div style="text-align:center;">
+                    <div style="font-size:20px;font-weight:700;color:var(--info);" id="swingLastScan">--</div>
+                    <div style="font-size:12px;color:var(--text-muted);">上次扫描</div>
+                </div>
+            </div>
+
+            <!-- 候选股票 -->
+            <div id="swingCandidates" style="display:none;">
+                <h4 style="margin:12px 0 8px;font-size:14px;">📋 候选股票</h4>
+                <div class="table-wrap" style="max-height:200px;">
+                    <table>
+                        <thead><tr><th>代码</th><th>策略</th><th>原因</th></tr></thead>
+                        <tbody id="swingCandidatesBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 运行日志 -->
+        <div class="card" style="margin-top: 16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;font-size:16px;">📝 运行日志</h3>
+                <button class="btn btn-ghost btn-sm" onclick="loadSwingLog()">🔄 刷新</button>
+            </div>
+            <div class="log-box" id="swingLogBox" style="max-height:300px;">等待启动...</div>
+        </div>
     </div>
 
     <!-- ==================== 配置 ==================== -->
@@ -1414,6 +1463,118 @@ async function saveSwing() {
     const res = await fetch('/api/config/swing', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ scan_interval: parseInt(document.getElementById('swingScan').value), max_positions: parseInt(document.getElementById('swingMaxPos').value), strategies: document.getElementById('swingStrats').value, stop_loss_pct: parseFloat(document.getElementById('swingStopLoss').value)/100, take_profit_pct: parseFloat(document.getElementById('swingTakeProfit').value)/100 }) });
     const d = await res.json();
     if (d.status === 'success') showToast('已保存'); else showToast('保存失败', 'error');
+}
+
+// ========== 波段股运行管理 ==========
+let swingRefreshTimer = null;
+
+async function toggleSwing() {
+    const btn = document.getElementById('swingRunBtn');
+    const isRunning = btn.textContent.includes('停止');
+    
+    if (isRunning) {
+        // 停止
+        const res = await fetch('/api/swing/stop', { method: 'POST' });
+        const d = await res.json();
+        if (d.status === 'success') {
+            showToast('波段扫描已停止');
+            btn.textContent = '▶ 启动扫描';
+            btn.className = 'btn btn-success';
+        } else {
+            showToast(d.message, 'error');
+        }
+    } else {
+        // 启动
+        const res = await fetch('/api/swing/run', { method: 'POST' });
+        const d = await res.json();
+        if (d.status === 'success') {
+            showToast('波段扫描已启动');
+            btn.textContent = '⏹ 停止扫描';
+            btn.className = 'btn btn-danger';
+            // 开始定时刷新状态
+            startSwingRefresh();
+        } else {
+            showToast(d.message, 'error');
+        }
+    }
+    loadSwingStatus();
+}
+
+async function loadSwingStatus() {
+    try {
+        const res = await fetch('/api/swing/status');
+        const d = await res.json();
+        
+        // 更新状态徽章
+        const badge = document.getElementById('swingStatusBadge');
+        const btn = document.getElementById('swingRunBtn');
+        if (d.running) {
+            badge.className = 'badge badge-green';
+            badge.textContent = '▶ 运行中';
+            btn.textContent = '⏹ 停止扫描';
+            btn.className = 'btn btn-danger';
+            if (!swingRefreshTimer) startSwingRefresh();
+        } else {
+            badge.className = 'badge badge-gray';
+            badge.textContent = '⏹ 未运行';
+            btn.textContent = '▶ 启动扫描';
+            btn.className = 'btn btn-success';
+            if (swingRefreshTimer) stopSwingRefresh();
+        }
+        
+        // 更新统计数据
+        document.getElementById('swingScanCount').textContent = d.scan_count || 0;
+        document.getElementById('swingTradeCount').textContent = d.trade_count || 0;
+        document.getElementById('swingCandidateCount').textContent = (d.candidates || []).length;
+        document.getElementById('swingLastScan').textContent = d.last_scan ? new Date(d.last_scan).toLocaleTimeString('zh-CN', {hour12: false}) : '--';
+        
+        // 更新候选股票
+        const candDiv = document.getElementById('swingCandidates');
+        const candBody = document.getElementById('swingCandidatesBody');
+        if (d.candidates && d.candidates.length > 0) {
+            candDiv.style.display = 'block';
+            candBody.innerHTML = d.candidates.map(c => `<tr><td><strong>${c.symbol}</strong></td><td><span class="badge badge-blue">${c.strategy}</span></td><td>${c.reason}</td></tr>`).join('');
+        } else {
+            candDiv.style.display = 'none';
+        }
+        
+        // 更新日志
+        if (d.log && d.log.length > 0) {
+            const logBox = document.getElementById('swingLogBox');
+            logBox.innerHTML = d.log.map(l => '<div>' + l.replace(/</g, '&lt;') + '</div>').join('');
+            logBox.scrollTop = logBox.scrollHeight;
+        }
+    } catch (e) {
+        console.error('加载波段状态失败:', e);
+    }
+}
+
+async function loadSwingLog() {
+    try {
+        const res = await fetch('/api/swing/log');
+        const d = await res.json();
+        const logBox = document.getElementById('swingLogBox');
+        if (d.log && d.log.length > 0) {
+            logBox.innerHTML = d.log.map(l => '<div>' + l.replace(/</g, '&lt;') + '</div>').join('');
+            logBox.scrollTop = logBox.scrollHeight;
+        } else {
+            logBox.innerHTML = '<div style="color:var(--text-muted);">暂无日志</div>';
+        }
+    } catch (e) {
+        console.error('加载日志失败:', e);
+    }
+}
+
+function startSwingRefresh() {
+    if (swingRefreshTimer) return;
+    swingRefreshTimer = setInterval(loadSwingStatus, 2000);
+}
+
+function stopSwingRefresh() {
+    if (swingRefreshTimer) {
+        clearInterval(swingRefreshTimer);
+        swingRefreshTimer = null;
+    }
 }
 
 // ========== 配置 ==========
