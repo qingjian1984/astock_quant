@@ -821,41 +821,85 @@ def result_images():
 
 
 # ========== 股票列表 ==========
+# 内置股票代码映射表 (备用方案，避免外部API超时)
+BUILTIN_STOCK_LIST = [
+    {"symbol": "000001", "name": "平安银行"}, {"symbol": "000002", "name": "万 科Ａ"},
+    {"symbol": "000063", "name": "中兴通讯"}, {"symbol": "000100", "name": "TCL科技"},
+    {"symbol": "000157", "name": "中联重科"}, {"symbol": "000333", "name": "美的集团"},
+    {"symbol": "000568", "name": "泸州老窖"}, {"symbol": "000651", "name": "格力电器"},
+    {"symbol": "000725", "name": "京东方Ａ"}, {"symbol": "000858", "name": "五 粮 液"},
+    {"symbol": "002027", "name": "分众传媒"}, {"symbol": "002049", "name": "紫光国微"},
+    {"symbol": "002230", "name": "科大讯飞"}, {"symbol": "002304", "name": "洋河股份"},
+    {"symbol": "002352", "name": "顺丰控股"}, {"symbol": "002415", "name": "海康威视"},
+    {"symbol": "002475", "name": "立讯精密"}, {"symbol": "002594", "name": "比亚迪"},
+    {"symbol": "002714", "name": "牧原股份"}, {"symbol": "300015", "name": "爱尔眼科"},
+    {"symbol": "300059", "name": "东方财富"}, {"symbol": "300322", "name": "硕贝德"},
+    {"symbol": "300450", "name": "先导智能"}, {"symbol": "300750", "name": "宁德时代"},
+    {"symbol": "600000", "name": "浦发银行"}, {"symbol": "600009", "name": "上海机场"},
+    {"symbol": "600016", "name": "民生银行"}, {"symbol": "600018", "name": "上港集团"},
+    {"symbol": "600028", "name": "中国石化"}, {"symbol": "600030", "name": "中信证券"},
+    {"symbol": "600031", "name": "三一重工"}, {"symbol": "600036", "name": "招商银行"},
+    {"symbol": "600048", "name": "保利发展"}, {"symbol": "600050", "name": "中国联通"},
+    {"symbol": "600104", "name": "上汽集团"}, {"symbol": "600111", "name": "北方稀土"},
+    {"symbol": "600196", "name": "复星医药"}, {"symbol": "600276", "name": "恒瑞医药"},
+    {"symbol": "600309", "name": "万华化学"}, {"symbol": "600436", "name": "片仔癀"},
+    {"symbol": "600438", "name": "通威股份"}, {"symbol": "600519", "name": "贵州茅台"},
+    {"symbol": "600585", "name": "海螺水泥"}, {"symbol": "600588", "name": "用友网络"},
+    {"symbol": "600690", "name": "海尔智家"}, {"symbol": "600745", "name": "闻泰科技"},
+    {"symbol": "600809", "name": "山西汾酒"}, {"symbol": "600887", "name": "伊利股份"},
+    {"symbol": "600900", "name": "长江电力"}, {"symbol": "601012", "name": "隆基绿能"},
+    {"symbol": "601088", "name": "中国神华"}, {"symbol": "601166", "name": "兴业银行"},
+    {"symbol": "601225", "name": "陕西煤业"}, {"symbol": "601288", "name": "农业银行"},
+    {"symbol": "601318", "name": "中国平安"}, {"symbol": "601398", "name": "工商银行"},
+    {"symbol": "601601", "name": "中国太保"}, {"symbol": "601628", "name": "中国人寿"},
+    {"symbol": "601668", "name": "中国建筑"}, {"symbol": "601669", "name": "中国电建"},
+    {"symbol": "601766", "name": "中国中车"}, {"symbol": "601816", "name": "京沪高铁"},
+    {"symbol": "601857", "name": "中国石油"}, {"symbol": "601888", "name": "中国中免"},
+    {"symbol": "601899", "name": "紫金矿业"}, {"symbol": "601919", "name": "中远海控"},
+    {"symbol": "601985", "name": "中国核电"}, {"symbol": "601988", "name": "中国银行"},
+    {"symbol": "603259", "name": "药明康德"}, {"symbol": "603288", "name": "海天味业"},
+    {"symbol": "603501", "name": "韦尔股份"}, {"symbol": "603799", "name": "华友钴业"},
+    {"symbol": "603986", "name": "兆易创新"}, {"symbol": "605117", "name": "德业股份"},
+]
+
 @app.route("/api/stocks", methods=["GET"])
 def get_stock_list():
-    """获取股票列表"""
-    try:
-        from data.manager import DataSourceManager
-        web_cfg = load_web_config()
-        merged = merge_config(web_cfg)
-        dm = DataSourceManager()
-        for ds_cfg in merged.get("data_sources", config.DATA_SOURCES):
-            if not ds_cfg.get("enabled"):
-                continue
-            name = ds_cfg["name"]
-            if name == "AKShare":
-                from data.sources.akshare_src import AKShareSource
-                dm.register(AKShareSource(retry=config.AKSHARE_RETRY))
-            elif name == "BaoStock":
-                from data.sources.baostock_src import BaoStockSource
-                dm.register(BaoStockSource())
-            elif name == "Tushare" and config.TUSHARE_TOKEN:
-                from data.sources.tushare_src import TushareSource
-                dm.register(TushareSource(token=config.TUSHARE_TOKEN))
-        dm.connect_all()
-        stock_list = dm.fetch_stock_list()
-        if stock_list.empty:
-            return jsonify({"status": "error", "message": "无法获取股票列表"})
-        # 限制返回数量
-        limit = request.args.get("limit", 5000, type=int)
-        stock_list = stock_list.head(limit)
-        return jsonify({
-            "status": "success",
-            "total": len(stock_list),
-            "stocks": stock_list.to_dict("records"),
-        })
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    """获取股票列表 (内置表 + 外部API 降级)"""
+    import threading
+    import concurrent.futures
+    
+    limit = request.args.get("limit", 5000, type=int)
+    
+    # 快速返回内置列表 (不阻塞)
+    stocks = BUILTIN_STOCK_LIST[:limit]
+    
+    # 后台尝试从外部API加载 (不阻塞响应)
+    def _fetch_external():
+        try:
+            from data.manager import DataSourceManager
+            from data.sources.baostock_src import BaoStockSource
+            dm = DataSourceManager()
+            dm.register(BaoStockSource())
+            dm.connect_all()
+            external_list = dm.fetch_stock_list()
+            if not external_list.empty:
+                # 更新内置缓存
+                global BUILTIN_STOCK_LIST
+                external_stocks = external_list.head(5000).to_dict("records")
+                if len(external_stocks) > len(BUILTIN_STOCK_LIST):
+                    BUILTIN_STOCK_LIST = external_stocks
+        except Exception:
+            pass  # 静默失败，不影响前端
+    
+    # 启动后台线程加载外部数据
+    t = threading.Thread(target=_fetch_external, daemon=True)
+    t.start()
+    
+    return jsonify({
+        "status": "success",
+        "total": len(stocks),
+        "stocks": stocks,
+    })
 
 
 # ========== 数据下载 ==========
