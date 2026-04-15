@@ -10,11 +10,18 @@ venv/
 
 # Data & results
 data/astock.db
+data/learning_memory.json
+data/long_term_stocks.json
+data/state.json
 results/
 logs/
+*.csv
+equity_*.csv
+trades_*.csv
 
 # Config with secrets
 .env
+config/web_config.json
 
 # IDE
 .vscode/
@@ -24,3 +31,6 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Old backups
+web_new/

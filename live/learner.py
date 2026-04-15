@@ -63,19 +63,113 @@ class StrategyLearner:
                 return pnl, pnl_pct
         return 0, 0
 
-    def evaluate_params(self, params: dict, data: pd.DataFrame) -> dict:
-        """评估一组参数的表现（模拟回测）"""
-        # 简单评估：计算参数下的胜率、收益等
-        # 实际应用中应运行完整回测
-        score = 0
-        # 这里可以做更复杂的评估
-        return {
-            "params": params,
-            "score": score,
-            "win_rate": 0,
-            "avg_pnl": 0,
-            "max_dd": 0,
+    def evaluate_params(self, params: dict, data: pd.DataFrame, capital: float = 100000) -> dict:
+        """
+        评估一组参数的表现（接入回测引擎）
+        运行完整的回测来评估参数效果
+        """
+        try:
+            # 动态导入策略类
+            from strategy.base import BaseStrategy
+            from backtest.engine import BacktestEngine
+
+            # 根据策略名称找到对应的策略类
+            strategy_class = self._get_strategy_class()
+            if not strategy_class:
+                return {
+                    "params": params,
+                    "score": -999,
+                    "win_rate": 0,
+                    "avg_pnl": 0,
+                    "max_dd": 1,
+                    "total_return": 0,
+                    "sharpe": 0,
+                    "error": "未知策略类",
+                }
+
+            # 创建策略实例
+            strat = strategy_class(**params)
+
+            # 运行回测
+            engine = BacktestEngine(strat, initial_capital=capital)
+            stats = engine.run(data, symbols=["stock"])
+
+            if not stats:
+                return {
+                    "params": params,
+                    "score": -999,
+                    "win_rate": 0,
+                    "avg_pnl": 0,
+                    "max_dd": 1,
+                    "total_return": 0,
+                    "sharpe": 0,
+                    "error": "回测无结果",
+                }
+
+            # 解析统计数据
+            total_return = self._parse_pct(stats.get("总收益率", "0%"))
+            max_dd = abs(self._parse_pct(stats.get("最大回撤", "0%")))
+            sharpe = float(stats.get("夏普比率", "0"))
+            win_rate = self._parse_pct(stats.get("胜率", "0%"))
+
+            # 计算综合评分
+            # 收益 40% + (1-回撤) 30% + 夏普 20% + 胜率 10%
+            score = (
+                total_return * 40 +
+                (1 - max_dd) * 30 +
+                max(sharpe, 0) * 20 +
+                win_rate * 10
+            )
+
+            return {
+                "params": params,
+                "score": score,
+                "win_rate": win_rate,
+                "avg_pnl": total_return,
+                "max_dd": max_dd,
+                "total_return": total_return,
+                "sharpe": sharpe,
+                "stats": stats,
+            }
+
+        except Exception as e:
+            logger.warning(f"参数评估失败: {e}")
+            return {
+                "params": params,
+                "score": -999,
+                "win_rate": 0,
+                "avg_pnl": 0,
+                "max_dd": 1,
+                "total_return": 0,
+                "sharpe": 0,
+                "error": str(e),
+            }
+
+    def _get_strategy_class(self):
+        """根据策略名称获取策略类"""
+        from strategy.ma_cross import MACrossStrategy
+        from strategy.rsi import RSIStrategy
+        from strategy.macd import MACDStrategy
+        from strategy.multi_factor import MultiFactorStrategy
+
+        strategy_map = {
+            "ma_cross": MACrossStrategy,
+            "rsi": RSIStrategy,
+            "macd": MACDStrategy,
+            "multi_factor": MultiFactorStrategy,
         }
+
+        # 尝试从策略名称中提取基础名称
+        base_name = self.strategy_name.replace("longterm_", "").split("_")[0]
+        return strategy_map.get(base_name)
+
+    def _parse_pct(self, value: str) -> float:
+        """解析百分比字符串"""
+        if isinstance(value, (int, float)):
+            return float(value) / 100
+        if isinstance(value, str):
+            return float(value.replace("%", "")) / 100
+        return 0.0
 
     def optimize(self, data: pd.DataFrame, n_iterations: int = 20) -> dict:
         """

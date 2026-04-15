@@ -84,3 +84,6 @@ LOG_CONFIG = {
     "level": "INFO",
     "file": str(PROJECT_ROOT / "logs" / "astock.log"),
 }
+
+# ===== 长线股配置 =====
+from core.portfolio import LONG_TERM_STOCKS, SWING_CONFIG

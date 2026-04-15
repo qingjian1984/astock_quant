@@ -47,6 +47,18 @@ class AutoTrader:
         self.rebalance_minutes = 120
         self.check_interval = 60
 
+    @staticmethod
+    def _get_dm():
+        """获取数据源管理器"""
+        from data.manager import DataSourceManager
+        from data.sources.akshare_src import AKShareSource
+        from data.sources.baostock_src import BaoStockSource
+        dm = DataSourceManager()
+        dm.register(AKShareSource(retry=3))
+        dm.register(BaoStockSource())
+        dm.connect_all()
+        return dm
+
     def start(self):
         """启动自动交易"""
         logger.info("=" * 50)

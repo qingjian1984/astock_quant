@@ -67,6 +67,19 @@ class RiskManager:
 
         return False, ""
 
+    def check_drawdown(self, current_value: float, peak_value: float) -> float:
+        """
+        检查回撤
+        Returns: 回撤比例（负值表示下跌）
+        """
+        if peak_value <= 0:
+            return 0.0
+        dd = (current_value - peak_value) / peak_value
+        self.max_drawdown = min(self.max_drawdown, dd)
+        if dd < self.cfg["max_drawdown_pct"]:
+            self.paused = True
+        return dd
+
     def calculate_fees(self, price: float, volume: int, is_sell: bool) -> dict:
         """计算A股交易费用"""
         tc = config.TRADE_CONFIG

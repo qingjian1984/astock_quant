@@ -47,7 +47,7 @@ class StrategyOptimizer:
                 try:
                     strat = s_class(**params)
                     engine = BacktestEngine(strat, initial_capital=capital)
-                    stats = engine.run(data, symbol=symbol)
+                    stats = engine.run(data, symbols=[symbol])
 
                     # 计算评分：收益*0.6 + (1-回撤)*0.2 + 夏普*0.2
                     score = self._calc_score(stats)

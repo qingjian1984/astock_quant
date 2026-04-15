@@ -7,12 +7,25 @@ from matplotlib import font_manager
 from pathlib import Path
 import config
 
-# 配置中文字体
-CJK_FONT = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+# 配置中文字体（自动查找可用字体）
 import matplotlib.font_manager as fm
-fm.fontManager.addfont(CJK_FONT)
-prop = fm.FontProperties(fname=CJK_FONT)
-plt.rcParams["font.family"] = prop.get_name()
+CJK_FONT_CANDIDATES = [
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansSC-Regular.otf",
+]
+_cjk_font = None
+for _path in CJK_FONT_CANDIDATES:
+    if Path(_path).exists():
+        fm.fontManager.addfont(_path)
+        _cjk_font = fm.FontProperties(fname=_path).get_name()
+        break
+if _cjk_font:
+    plt.rcParams["font.family"] = _cjk_font
+else:
+    # 回退到系统默认字体
+    plt.rcParams["font.family"] = "sans-serif"
 plt.rcParams["axes.unicode_minus"] = False
 
 

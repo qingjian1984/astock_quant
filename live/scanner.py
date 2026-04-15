@@ -55,7 +55,7 @@ class StockScanner:
 
                 # 快速回测判断是否有买入信号
                 engine = BacktestEngine(strategy(), initial_capital=100000)
-                stats = engine.run(df, symbol=symbol)
+                stats = engine.run(df, symbols=[symbol])
 
                 # 评分逻辑：有买入信号且预期收益为正
                 trades = engine.get_trades()
