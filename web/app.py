@@ -526,11 +526,27 @@ def get_status():
 @app.route("/api/logs")
 def get_logs():
     lines = request.args.get("lines", 200, type=int)
-    if LOG_FILE.exists():
-        with open(LOG_FILE, "r", encoding="utf-8") as f:
-            all_lines = f.readlines()
-        return jsonify({"logs": all_lines[-lines:]})
-    return jsonify({"logs": ["暂无日志文件"]})
+    log_dir = LOG_FILE.parent
+    
+    # 查找所有 .log 文件，按修改时间排序
+    log_files = sorted(log_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+    
+    if not log_files:
+        return jsonify({"logs": ["暂无日志文件，请先运行系统"]})
+    
+    all_logs = []
+    # 读取最新的 2 个日志文件
+    for log_file in log_files[:2]:
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                content = f.read()
+                if content:
+                    all_logs.append(f"\n========== {log_file.name} ==========\n")
+                    all_logs.extend(content.splitlines())
+        except Exception as e:
+            all_logs.append(f"读取 {log_file.name} 失败: {e}")
+    
+    return jsonify({"logs": all_logs[-lines:]})
 
 
 # ========== 策略优化 ==========
